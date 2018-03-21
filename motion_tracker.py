@@ -142,12 +142,20 @@ def detect_outliers(array):
 
 
 class LandmarkDatabase:
-    """Database of 3D landmark positions and their descriptors"""
+    """
+    Database of 3D landmark positions and their descriptors.
+    Attributes:
+        landmarks     - 3D position of landmarks
+        descriptors   - landmark feature vectors
+        miss_counts   - number of consecutive frames in which landmark not seen
+        miss_thresh   - if miss_count > miss_thresh, landmark is pruned
+    """
 
-    def __init__(self, X=np.array([], dtype=np.float64),
-                 descriptors=np.array([], dtype=np.float64)):
+    def __init__(self, X, descriptors, miss_thresh=20):
         self.landmarks = X
         self.descriptors = descriptors
+        self.miss_counts = np.zeros(len(X), dtype=int)
+        self.miss_thresh = miss_thresh
 
     def __len__(self):
         return len(self.landmarks)
@@ -156,15 +164,36 @@ class LandmarkDatabase:
         if len(self) == 0:
             self.landmarks = X
             self.descriptors = descriptors
+            self.miss_counts = np.zeros(len(X), dtype=int)
         else:
             self.landmarks = np.vstack((self.landmarks, X))
             self.descriptors = np.vstack((self.descriptors, descriptors))
+            self.miss_counts = np.concatenate((self.miss_counts,
+                                               np.zeros(len(X))))
 
     def trim(self, indices):
         """Removes entries with given indices from database"""
         self.landmarks = np.delete(self.landmarks, indices, axis=0)
         self.descriptors = np.delete(self.descriptors, indices, axis=0)
+        self.miss_counts = np.delete(self.miss_counts, indices)
 
+    def update_landmark_usage(self, landmark_indices):
+        """
+        Updates miss counts for entries in database. If indices are in the input
+        array landmark_indices, then their corresponding miss count is set to 0.
+        Otherwise, miss count is incremented by 1.
+
+        Database entries with miss counts greater than threshold are then
+        removed.
+        """
+        mask_used = np.zeros(len(self), dtype=bool)
+        mask_unused = np.ones(len(self), dtype=bool)
+        mask_used[landmark_indices] = True
+        mask_unused[landmark_indices] = False
+
+        self.miss_counts[mask_used] = 0
+        self.miss_counts[mask_unused] += 1
+        self.trim(np.where(self.miss_counts >= self.miss_thresh)[0])
 
 class StereoFeatureTracker:
 
@@ -173,7 +202,7 @@ class StereoFeatureTracker:
             'Arguments must be CameraView objects!'
         self.view1 = view1
         self.view2 = view2
-        self.database = LandmarkDatabase()
+        self.database = LandmarkDatabase(np.array([]), np.array([]))
         self.currentPose = np.zeros(6, dtype=np.float64)  # rX, rY, rZ, X, Y, Z
         self.frameNumber = 0
         self.estMethod = 'ls'  # Estimate pose using least squares
@@ -251,28 +280,35 @@ class StereoFeatureTracker:
         if self.frameNumber == 0:
 
             self.database.update(X, frameDescriptors)
-            matchDBTime, poseEstTime, usedKeypoints1, usedKeypoints2 \
-                = 0, 0, 0, 0
+            matchDBTime, poseEstTime, used_landmarks1, used_landmarks2 \
+                = 0, 0, np.array([]), np.array([])
 
         # Estimate pose using Horn's method, finding the required transformation
         # between triangulated points in current frame and matched landmarks in
         # the database.
         elif self.estMethod == 'ls':
 
-            matchDBTime, poseEstTime, usedKeypoints, flag = \
+            matchDBTime, poseEstTime, used_landmarks, flag = \
                 self.estimate_pose_ls(X, frameDescriptors)
-            usedKeypoints1 = usedKeypoints
-            usedKeypoints2 = usedKeypoints
+            used_landmarks1 = used_landmarks
+            used_landmarks2 = used_landmarks
 
         # Estimation pose using Gauss-Newton iterations, finding required
         # transformation that minimizes pixel projection error between keypoints
         # and matched landmarks in database.
         elif self.estMethod == 'gn':
 
-            matchDBTime, poseEstTime, usedKeypoints1, usedKeypoints2, flag = \
+            matchDBTime, poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.estimate_pose_gn(X, frameDescriptors, in1, in2)
 
+        # Update landmark usage, prune landmarks that have not bee used for too
+        # many consecutive frames.
+        used_landmark_indices = np.union1d(used_landmarks1, used_landmarks2)
+        self.database.update_landmark_usage(used_landmark_indices.astype(int))
         processFrameTime = time.perf_counter() - processFrameStart
+
+        n_used_landmarks1 = len(used_landmarks1)
+        n_used_landmarks2 = len(used_landmarks2)
 
         print('\nPose estimate for frame {} is:\n {} \n'.format(
             self.frameNumber, self.currentPose))
@@ -290,7 +326,7 @@ class StereoFeatureTracker:
                          processFrameTime,
                          self.view1.n_keys, self.view2.n_keys,
                          len(in1),
-                         usedKeypoints1, usedKeypoints2,
+                         n_used_landmarks1, n_used_landmarks2,
                          len(self.database))
 
         self.metaData.append(frameMetaData)
@@ -394,6 +430,7 @@ class StereoFeatureTracker:
             # Relative outlier rejection
             # outliers = detect_outliers(squErr)
             XMatched = np.delete(XMatched, outliers, axis=0)
+            db_index_used = np.delete(dbIdx, outliers, axis=0)
             landmarksMatched = np.delete(landmarksMatched, outliers, axis=0)
 
             if (len(XMatched) >= 3 and len(landmarksMatched >= 3)):
@@ -418,6 +455,8 @@ class StereoFeatureTracker:
                     landmarksNew = mdot(np.linalg.inv(H), landmarksNew.T).T
                     self.database.update(landmarksNew, landmarkDescriptorsNew)
                     usedKeypoints = len(XMatched)
+                    print('USED KEYPOINTS PARAM:', usedKeypoints)
+                    print('DB INDEX USED:', len(db_index_used))
             else:
                 print('Not enough matches with database, returning previous pose\n')
                 usedKeypoints = 0
@@ -428,7 +467,7 @@ class StereoFeatureTracker:
             flag = 1
         poseEstTime = time.perf_counter() - poseEstStart
 
-        return matchDBTime, poseEstTime, usedKeypoints, flag
+        return matchDBTime, poseEstTime, db_index_used, flag
 
     def estimate_pose_gn(self, X, frameDescriptors, in1, in2):
         """
@@ -449,7 +488,7 @@ class StereoFeatureTracker:
 
         # Estimate pose
         if (len(frameIdx1) and len(frameIdx2)):
-            poseEstTime, usedKeypoints1, usedKeypoints2, flag = \
+            poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     frameIdx1,
                     frameIdx2,
@@ -457,7 +496,7 @@ class StereoFeatureTracker:
                     dbIdx2,
                 )
         elif len(frameIdx1):
-            poseEstTime, usedKeypoints1, usedKeypoints2, flag = \
+            poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     frameIdx1,
                     np.array([]),
@@ -465,7 +504,7 @@ class StereoFeatureTracker:
                     np.array([]),
                 )
         elif len(frameIdx2):
-            poseEstTime, usedKeypoints1, usedKeypoints2, flag = \
+            poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     np.array([]),
                     frameIdx2,
@@ -474,12 +513,14 @@ class StereoFeatureTracker:
                 )
         else:
             print('No matches with database, returning previous pose.\n')
-            usedKeypoints1 = 0
-            usedKeypoints2 = 0
+            n_used_landmarks1 = 0
+            n_used_landmarks2 = 0
             poseEstTime = 0
             flag = 1
             return matchDBTime, poseEstTime, usedKeypoints1, usedKeypoints2, flag
 
+        n_used_landmarks1 = len(used_landmarks1)
+        n_used_landmarks2 = len(used_landmarks2)
         H = vec2mat(self.currentPose)
         # Add new entries to database
         new_landmarks = []
@@ -493,7 +534,8 @@ class StereoFeatureTracker:
             X_new = mdot(np.linalg.inv(H), X_new.T).T
             self.database.update(X_new, descriptors_new)
 
-        return matchDBTime, poseEstTime, usedKeypoints1, usedKeypoints2, flag
+        return matchDBTime, poseEstTime, used_landmarks1, used_landmarks2, \
+               flag
 
     def GN_estimation(self, key_index1, key_index2, db_index1,
                       db_index2, n_iterations=10, outlier_threshold=2):
@@ -517,25 +559,27 @@ class StereoFeatureTracker:
         for i in range(n_iterations):
             # print('Iteration number', i + 1)
             H = vec2mat(pose_est)
-            J1, projections1, key_coords1, db_index1, usedKeypoints1 =  \
+            J1, projections1, key_coords1, db_index1 =  \
                 self.iterate_jacobian(P1, H, key_coords1,
                                       db_index1,
                                       outlier_threshold, i)
 
-            J2, projections2, key_coords2, db_index2, usedKeypoints2 = \
+            J2, projections2, key_coords2, db_index2 = \
                 self.iterate_jacobian(P2, H, key_coords2,
                                       db_index2,
                                       outlier_threshold, i)
 
+            used_landmarks1 = len(db_index1)
+            used_landmarks2 = len(db_index2)
             print('GN Iteration number:', i + 1)
-            print('Used keypoints view1:', usedKeypoints1)
-            print('Used keypoints view2:', usedKeypoints2,'\n')
+            print('Used keypoints view1:', used_landmarks1)
+            print('Used keypoints view2:', used_landmarks2,'\n')
 
-            if usedKeypoints1 + usedKeypoints2 < 3:
+            if used_landmarks1 + used_landmarks2 < 3:
                 poseEstTime = time.perf_counter() - poseEstStart
                 print('Cannot estimate pose from this frame, return last pose.')
                 usedKeypoints1, usedKeypoints2 = 0, 0
-                return poseEstTime, usedKeypoints1, usedKeypoints2, 1
+                return poseEstTime, db_index1, db_index2, 1
 
             if J1.size and J2.size:
                 J = np.concatenate((J1, J2), axis=0)
@@ -562,25 +606,22 @@ class StereoFeatureTracker:
         if (pose_change > self.pose_threshold).any():
             print('Pose change larger than threshold, returning' +
                   ' previous pose')
-            usedKeypoints1 = 0
-            usedKeypoints2 = 0
+            db_index1 = np.array([])
+            db_index2 = np.array([])
             flag = 1
         else:
             self.currentPose = pose_est
             flag = 0
 
         poseEstTime = time.perf_counter() - poseEstStart
-        return poseEstTime, usedKeypoints1, usedKeypoints2, flag
+        return poseEstTime, db_index1, db_index2, flag
 
     def iterate_jacobian(self, P, H, key_coords, db_index,
                          outlier_threshold=2, iter_number=0):
         """
         Function called in main loop of GN_estimation.
         """
-        usedKeypoints = len(db_index)
-        db_landmarks = self.database.landmarks[db_index]
-
-        if usedKeypoints:
+        if len(db_index):
             db_landmarks = self.database.landmarks[db_index]
             projections = mdot(P, H, db_landmarks.T)
             projections = np.apply_along_axis(lambda v: v/v[-1], 0, projections)
@@ -597,7 +638,6 @@ class StereoFeatureTracker:
                 Joutliers = np.array([2*outliers,
                                       (2*outliers + 1)]).flatten()
                 J = np.delete(J, Joutliers, axis=0)
-                usedKeypoints -= len(outliers)
                 squErr = np.delete(squErr, outliers)
             if iter_number >= 8:
                 abs_outliers = np.where(squErr > outlier_threshold)[0]
@@ -608,11 +648,11 @@ class StereoFeatureTracker:
                     Joutliers = np.array([2*abs_outliers,
                                           (2*abs_outliers + 1)]).flatten()
                     J = np.delete(J, Joutliers, axis=0)
-                    usedKeypoints -= len(abs_outliers)
         else:
             J = np.array([])
-            usedKeypoints = 0
-        return J, projections, key_coords, db_index, usedKeypoints
+            projections = np.array([])
+            key_coords = np.array([])
+        return J, projections, key_coords, db_index
 
     @staticmethod
     def euler_jacobian(P, H, X, x):
