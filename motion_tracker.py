@@ -183,7 +183,7 @@ class LandmarkDatabase:
         array landmark_indices, then their corresponding miss count is set to 0.
         Otherwise, miss count is incremented by 1.
 
-        Database entries with miss counts greater than threshold are then
+        Database entries with miss counts greater than miss threshold are then
         removed.
         """
         mask_used = np.zeros(len(self), dtype=bool)
@@ -293,7 +293,7 @@ class StereoFeatureTracker:
             used_landmarks1 = used_landmarks
             used_landmarks2 = used_landmarks
 
-        # Estimation pose using Gauss-Newton iterations, finding required
+        # Estimate pose using Gauss-Newton iterations, finding required
         # transformation that minimizes pixel projection error between keypoints
         # and matched landmarks in database.
         elif self.estMethod == 'gn':
@@ -305,6 +305,7 @@ class StereoFeatureTracker:
         # many consecutive frames.
         used_landmark_indices = np.union1d(used_landmarks1, used_landmarks2)
         self.database.update_landmark_usage(used_landmark_indices.astype(int))
+
         processFrameTime = time.perf_counter() - processFrameStart
 
         n_used_landmarks1 = len(used_landmarks1)
@@ -444,7 +445,7 @@ class StereoFeatureTracker:
                     usedKeypoints = 0
                     flag = 1
                 else:
-                    self.database.trim(dbIdx[outliers])
+                    # self.database.trim(dbIdx[outliers])
                     self.currentPose = mat2vec(H)
 
                     # Add new landmarks to database
