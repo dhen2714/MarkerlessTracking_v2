@@ -451,26 +451,26 @@ class StereoFeatureTracker:
         if (len(frameIdx1) and len(frameIdx2)):
             poseEstTime, usedKeypoints1, usedKeypoints2, flag = \
                 self.GN_estimation(
-                    self.view1.key_coords[frameIdx1],
-                    self.view2.key_coords[frameIdx2],
-                    self.database.landmarks[dbIdx1, :],
-                    self.database.landmarks[dbIdx2, :],
+                    frameIdx1,
+                    frameIdx2,
+                    dbIdx1,
+                    dbIdx2,
                 )
         elif len(frameIdx1):
             poseEstTime, usedKeypoints1, usedKeypoints2, flag = \
                 self.GN_estimation(
-                    self.view1.key_coords[frameIdx1],
+                    frameIdx1,
                     np.array([]),
-                    self.database.landmarks[dbIdx1, :],
+                    dbIdx1,
                     np.array([]),
                 )
         elif len(frameIdx2):
             poseEstTime, usedKeypoints1, usedKeypoints2, flag = \
                 self.GN_estimation(
                     np.array([]),
-                    self.view2.key_coords[frameIdx2],
+                    frameIdx2,
                     np.array([]),
-                    self.database.landmarks[dbIdx2, :],
+                    dbIdx2,
                 )
         else:
             print('No matches with database, returning previous pose.\n')
@@ -495,16 +495,21 @@ class StereoFeatureTracker:
 
         return matchDBTime, poseEstTime, usedKeypoints1, usedKeypoints2, flag
 
-    def GN_estimation(self, key_coords1, key_coords2, db_landmarks1,
-                      db_landmarks2, n_iterations=10, outlier_threshold=2):
+    def GN_estimation(self, key_index1, key_index2, db_index1,
+                      db_index2, n_iterations=10, outlier_threshold=2):
         """
         Estimates pose using Gauss-Newton iterations. Based on Andre's IDL
         implentation numerical_estimation_2cams_v2.pro
         """
         P1 = self.view1.P
         P2 = self.view2.P
-        usedKeypoints1 = db_landmarks1.shape[0]
-        usedKeypoints2 = db_landmarks2.shape[0]
+        key_coords1 = self.view1.key_coords[key_index1]
+        key_coords2 = self.view2.key_coords[key_index2]
+        # db_landmarks1 = self.database.landmarks[db_index1, :]
+        # db_landmarks2 = self.database.landmarks[db_index2, :]
+
+        usedKeypoints1 = len(db_index1)
+        usedKeypoints2 = len(db_index2)
 
         poseEstStart = time.perf_counter()
         pose_est = self.currentPose
@@ -512,75 +517,15 @@ class StereoFeatureTracker:
         for i in range(n_iterations):
             # print('Iteration number', i + 1)
             H = vec2mat(pose_est)
+            J1, projections1, key_coords1, db_index1, usedKeypoints1 =  \
+                self.iterate_jacobian(P1, H, key_coords1,
+                                      db_index1,
+                                      outlier_threshold, i)
 
-            if usedKeypoints1:
-                projections1 = mdot(P1, H, db_landmarks1.T)
-                projections1 = np.apply_along_axis(lambda v: v/v[-1], 0,
-                                                   projections1)
-                J1 = self.euler_jacobian(P1, H, db_landmarks1, projections1)
-
-                squErr = np.sqrt(np.sum(np.square(projections1[:2, :] - key_coords1.T), 0))
-                outliers = detect_outliers(squErr)
-
-                if outliers.shape:
-                    key_coords1 = np.delete(key_coords1, outliers, axis=0)
-                    projections1 = np.delete(projections1, outliers, axis=1)
-                    db_landmarks1 = np.delete(db_landmarks1, outliers, axis=0)
-                    Joutliers = np.array([2*outliers,
-                                          (2*outliers + 1)]).flatten()
-                    J1 = np.delete(J1, Joutliers, axis=0)
-                    usedKeypoints1 -= len(outliers)
-                    squErr = np.delete(squErr, outliers)
-                if i >= 8:
-                    absOutliers = np.where(squErr > outlier_threshold)[0]
-                    if len(absOutliers) > 0:
-                        key_coords1 = np.delete(key_coords1, absOutliers,
-                                                axis=0)
-                        projections1 = np.delete(projections1, absOutliers,
-                                                 axis=1)
-                        db_landmarks1 = np.delete(db_landmarks1, absOutliers,
-                                                  axis=0)
-                        Joutliers = np.array([2*absOutliers,
-                                              (2*absOutliers + 1)]).flatten()
-                        J1 = np.delete(J1, Joutliers, axis=0)
-                        usedKeypoints1 -= len(absOutliers)
-            else:
-                J1 = np.array([])
-                usedKeypoints1 = 0
-
-            if usedKeypoints2:
-                projections2 = mdot(P2, H, db_landmarks2.T)
-                projections2 = np.apply_along_axis(lambda v: v/v[-1], 0,
-                                                   projections2)
-                J2 = self.euler_jacobian(P2, H, db_landmarks2, projections2)
-                squErr = np.sqrt(np.sum(np.square(projections2[:2, :] - key_coords2.T), 0))
-                outliers = detect_outliers(squErr)
-
-                if outliers.shape:
-                    key_coords2 = np.delete(key_coords2, outliers, axis=0)
-                    projections2 = np.delete(projections2, outliers, axis=1)
-                    db_landmarks2 = np.delete(db_landmarks2, outliers, axis=0)
-                    Joutliers = np.array([2*outliers,
-                                          (2*outliers + 1)]).flatten()
-                    J2 = np.delete(J2, Joutliers, axis=0)
-                    usedKeypoints2 -= len(outliers)
-                    squErr = np.delete(squErr, outliers)
-                if i >= 8:
-                    absOutliers = np.where(squErr > outlier_threshold)[0]
-                    if len(absOutliers) > 0:
-                        key_coords2 = np.delete(key_coords2, absOutliers,
-                                                axis=0)
-                        projections2 = np.delete(projections2, absOutliers,
-                                                 axis=1)
-                        db_landmarks2 = np.delete(db_landmarks2, absOutliers,
-                                                  axis=0)
-                        Joutliers = np.array([2*absOutliers,
-                                              (2*absOutliers + 1)]).flatten()
-                        J2 = np.delete(J2, Joutliers, axis=0)
-                        usedKeypoints2 -= len(absOutliers)
-            else:
-                J2 = np.array([])
-                usedKeypoints2 = 0
+            J2, projections2, key_coords2, db_index2, usedKeypoints2 = \
+                self.iterate_jacobian(P2, H, key_coords2,
+                                      db_index2,
+                                      outlier_threshold, i)
 
             print('GN Iteration number:', i + 1)
             print('Used keypoints view1:', usedKeypoints1)
@@ -625,8 +570,49 @@ class StereoFeatureTracker:
             flag = 0
 
         poseEstTime = time.perf_counter() - poseEstStart
-
         return poseEstTime, usedKeypoints1, usedKeypoints2, flag
+
+    def iterate_jacobian(self, P, H, key_coords, db_index,
+                         outlier_threshold=2, iter_number=0):
+        """
+        Function called in main loop of GN_estimation.
+        """
+        usedKeypoints = len(db_index)
+        db_landmarks = self.database.landmarks[db_index]
+
+        if usedKeypoints:
+            db_landmarks = self.database.landmarks[db_index]
+            projections = mdot(P, H, db_landmarks.T)
+            projections = np.apply_along_axis(lambda v: v/v[-1], 0, projections)
+
+            J = self.euler_jacobian(P, H, db_landmarks, projections)
+            squErr = np.sqrt(np.sum(
+                     np.square(projections[:2, :] - key_coords.T), 0))
+            outliers = detect_outliers(squErr)
+
+            if outliers.shape:
+                key_coords = np.delete(key_coords, outliers, axis=0)
+                projections = np.delete(projections, outliers, axis=1)
+                db_index = np.delete(db_index, outliers, axis=0)
+                Joutliers = np.array([2*outliers,
+                                      (2*outliers + 1)]).flatten()
+                J = np.delete(J, Joutliers, axis=0)
+                usedKeypoints -= len(outliers)
+                squErr = np.delete(squErr, outliers)
+            if iter_number >= 8:
+                abs_outliers = np.where(squErr > outlier_threshold)[0]
+                if len(abs_outliers) > 0:
+                    key_coords = np.delete(key_coords, abs_outliers, axis=0)
+                    projections = np.delete(projections, abs_outliers, axis=1)
+                    db_index = np.delete(db_index, abs_outliers, axis=0)
+                    Joutliers = np.array([2*abs_outliers,
+                                          (2*abs_outliers + 1)]).flatten()
+                    J = np.delete(J, Joutliers, axis=0)
+                    usedKeypoints -= len(abs_outliers)
+        else:
+            J = np.array([])
+            usedKeypoints = 0
+        return J, projections, key_coords, db_index, usedKeypoints
 
     @staticmethod
     def euler_jacobian(P, H, X, x):
