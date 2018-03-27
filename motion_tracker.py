@@ -240,7 +240,8 @@ class StereoFeatureTracker:
                   'they have been entered correctly!')
 
         self.matches_inframe = []  # Could be useful for diagnostic purposes
-        self.matches_database = []
+        self.matches_db_view1 = []
+        self.matches_db_view2 = []
 
     def set_detectors(self, detector):
         self.view1.set_detAndDes(detector)
@@ -268,9 +269,13 @@ class StereoFeatureTracker:
 
         # Perform intra-frame matching, get indices of matched keypoints.
         matchFrameStart = time.perf_counter()
-        in1, in2 = self.match_descriptors(self.view1.descriptors,
-                                          self.view2.descriptors,
-                                          matching_type='intra_frame')
+        matches_inframe = self.match_descriptors(self.view1.descriptors,
+                                                 self.view2.descriptors,
+                                                 matching_type='intra_frame')
+        # Remove keypoints in view 1 that have been matched to multiple
+        # keypoints in view 2.
+        self.matches_inframe = self.remove_duplicate_matches(matches_inframe)
+        in1, in2 = self.extract_match_indices(self.matches_inframe)
         # Apply epipolar constraint to intra-frame matches.
         inEpi = self.epipolar_constraint(self.view1.key_coords[in1],
                                          self.view2.key_coords[in2],
@@ -438,9 +443,21 @@ class StereoFeatureTracker:
         flag = 0
         # Match 3D points found in current frame with database
         matchDBStart = time.perf_counter()
-        frameIdx, dbIdx = self.match_descriptors(frameDescriptors,
-                                                 self.database.descriptors,
-                                                 matching_type='database')
+        matches_db = self.match_descriptors(frameDescriptors,
+                                            self.database.descriptors,
+                                            matching_type='database')
+        # frameIdx_raw and dbIdx_raw contain duplicate/unreliable matches. We
+        # retain these indices as we add the landmarks with indices
+        # complementary to these raw indices to the database. For pose
+        # estimation however, we use frameIdx and dbIdx, which don't contain
+        # duplicates.
+        frameIdx_raw, dbIdx_raw = self.extract_match_indices(matches_db)
+        self.matches_db_view1 = matches_db
+        self.matches_db_view2 = matches_db
+
+        matches_db = self.remove_duplicate_matches(matches_db)
+        frameIdx, dbIdx = self.extract_match_indices(matches_db)
+
         matchDBTime = time.perf_counter() - matchDBStart
 
         poseEstStart = time.perf_counter()
@@ -479,8 +496,8 @@ class StereoFeatureTracker:
                     self.currentPose = mat2vec(H)
 
                     # Add new landmarks to database
-                    landmarksNew = np.delete(X, frameIdx, axis=0)
-                    landmarkDescriptorsNew = np.delete(frameDescriptors, frameIdx,
+                    landmarksNew = np.delete(X, frameIdx_raw, axis=0)
+                    landmarkDescriptorsNew = np.delete(frameDescriptors, frameIdx_raw,
                                                        axis=0)
                     # Transform new landmark positions to original pose
                     landmarksNew = mdot(np.linalg.inv(H), landmarksNew.T).T
@@ -509,12 +526,28 @@ class StereoFeatureTracker:
         """
         flag = 0
         matchDBStart = time.perf_counter()
-        frameIdx1, dbIdx1 = self.match_descriptors(self.view1.descriptors,
-                                                   self.database.descriptors,
-                                                   matching_type='database')
-        frameIdx2, dbIdx2 = self.match_descriptors(self.view2.descriptors,
-                                                   self.database.descriptors,
-                                                   matching_type='database')
+        matches_view1db = self.match_descriptors(self.view1.descriptors,
+                                                 self.database.descriptors,
+                                                 matching_type='database')
+        matches_view2db = self.match_descriptors(self.view2.descriptors,
+                                                 self.database.descriptors,
+                                                 matching_type='database')
+        # frameIdx_raw and dbIdx_raw contain duplicate/unreliable matches. We
+        # retain these indices as we add the landmarks with indices
+        # complementary to these raw indices to the database. For pose
+        # estimation however, we use frameIdx and dbIdx, which don't contain
+        # duplicates.
+        frameIdx1_raw, dbIdx1_raw = self.extract_match_indices(matches_view1db)
+        frameIdx2_raw, dbIdx2_raw = self.extract_match_indices(matches_view2db)
+        self.matches_db_view1 = matches_view1db
+        self.matches_db_view2 = matches_view2db
+
+        matches_view1db = self.remove_duplicate_matches(matches_view1db)
+        matches_view2db = self.remove_duplicate_matches(matches_view2db)
+
+        frameIdx1, dbIdx1 = self.extract_match_indices(matches_view1db)
+        frameIdx2, dbIdx2 = self.extract_match_indices(matches_view2db)
+
         matchDBTime = time.perf_counter() - matchDBStart
         print('DB MATCHES VIEW1:', len(dbIdx1))
         print('DB MATCHES VIEW2:', len(dbIdx2))
@@ -559,7 +592,7 @@ class StereoFeatureTracker:
         new_landmarks = []
         if len(in1) and flag == 0:
             for i in range(len(in1)):
-                if (in1[i] not in frameIdx1) and (in2[i] not in frameIdx2):
+                if (in1[i] not in frameIdx1_raw) and (in2[i] not in frameIdx2_raw):
                     new_landmarks.append(i)
 
             X_new = X[new_landmarks, :]
@@ -739,15 +772,13 @@ class StereoFeatureTracker:
                 matches = self.matcher.match(descriptors1, descriptors2)
         except ValueError:
             # If database only has one entry, knnMatch will throw a ValueError
-            return np.array([], dtype='int'), np.array([], dtype='int')
+            return []
+        return matches
 
-        matches = self.remove_duplicate_matches(np.array(matches))
-
-        if matching_type == 'intra_frame':
-            self.matches_inframe = matches
-        elif matching_type == 'database':
-            self.matches_database = matches
-
+    @staticmethod
+    def extract_match_indices(matches):
+        """Returns query and train indices for a set of input matches."""
+        # Returns empty arrays if matches is an empty list
         in1 = np.array([matches[i].queryIdx for i in range(len(matches))],
                        dtype='int')
         in2 = np.array([matches[i].trainIdx for i in range(len(matches))],
@@ -766,6 +797,7 @@ class StereoFeatureTracker:
 
     @staticmethod
     def remove_duplicate_matches(matches):
+        matches = np.array(matches)
         matchIndices = np.array([(matches[i].queryIdx, matches[i].trainIdx)
                                  for i in range(len(matches))])
         if matchIndices.size:
