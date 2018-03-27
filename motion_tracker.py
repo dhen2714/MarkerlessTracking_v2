@@ -151,7 +151,7 @@ class LandmarkDatabase:
         miss_thresh   - if miss_count > miss_thresh, landmark is pruned
     """
 
-    def __init__(self, X, descriptors, miss_thresh=20):
+    def __init__(self, X, descriptors, miss_thresh=None):
         self.landmarks = X
         self.descriptors = descriptors
         self.miss_counts = np.zeros(len(X), dtype=int)
@@ -193,7 +193,19 @@ class LandmarkDatabase:
 
         self.miss_counts[mask_used] = 0
         self.miss_counts[mask_unused] += 1
-        self.trim(np.where(self.miss_counts >= self.miss_thresh)[0])
+        if self.miss_thresh is not None:
+            self.trim(np.where(self.miss_counts >= self.miss_thresh)[0])
+
+    def save(self, output_filename):
+        """
+        Saves database to pickle format.
+        """
+        raw_data = [[X, m, desc] for X, m, desc in zip(
+                    self.landmarks, self.miss_counts, self.descriptors)]
+        pd.DataFrame(data=raw_data,
+                     columns=['Position',
+                              'Miss count',
+                              'Descriptor']).to_pickle(output_filename)
 
 class StereoFeatureTracker:
 
@@ -207,6 +219,7 @@ class StereoFeatureTracker:
         self.frameNumber = 0
         self.estMethod = 'ls'  # Estimate pose using least squares
         self.metaData = []  # Timing data, size of database, etc.
+        self.pose_history = [] # Past poses with flag
 
         self.ratioTest = True  # Apply ratio test in descriptor matching
         self.distRatio = 0.6  # Distance ratio cutoff for ratio test
@@ -227,12 +240,13 @@ class StereoFeatureTracker:
                   'they have been entered correctly!')
 
         self.matches_inframe = []  # Could be useful for diagnostic purposes
+        self.matches_database = []
 
     def set_detectors(self, detector):
         self.view1.set_detAndDes(detector)
         self.view2.set_detAndDes(detector)
 
-    def process_frame(self, image1, image2, verbose=True):
+    def process_frame(self, image1, image2, save_poses=True, verbose=True):
         """
         Method to process a new frame, calculating a new current pose.
         Inputs:
@@ -255,7 +269,8 @@ class StereoFeatureTracker:
         # Perform intra-frame matching, get indices of matched keypoints.
         matchFrameStart = time.perf_counter()
         in1, in2 = self.match_descriptors(self.view1.descriptors,
-                                          self.view2.descriptors)
+                                          self.view2.descriptors,
+                                          matching_type='intra_frame')
         # Apply epipolar constraint to intra-frame matches.
         inEpi = self.epipolar_constraint(self.view1.key_coords[in1],
                                          self.view2.key_coords[in2],
@@ -316,6 +331,11 @@ class StereoFeatureTracker:
 
         print('{} landmarks in database.\n'.format(len(self.database)))
 
+        # Save pose history
+        if save_poses:
+            self.pose_history.append([self.frameNumber, *self.currentPose,
+                                      flag])
+
         # Save metadata for current frame.
         frameMetaData = (self.frameNumber,
                          loadTime1, loadTime2,
@@ -337,6 +357,15 @@ class StereoFeatureTracker:
         if not verbose:
             sys.stdout = sys.__stdout__
         return self.currentPose, flag
+
+    def save_poses(self, filePath):
+        """
+        Saves poses with flag and frame number in pickle format. Saves
+        timestamps if provided.
+        """
+        pd.DataFrame(data=np.array(self.pose_history)[:, 1:],
+                     columns=['rX', 'rY', 'rZ', 'X', 'Y', 'Z', 'Flag'],
+                     index=np.array(self.pose_history)[:, 0]).to_pickle(filePath)
 
     def save_metadata(self, filePath):
         """
@@ -410,7 +439,8 @@ class StereoFeatureTracker:
         # Match 3D points found in current frame with database
         matchDBStart = time.perf_counter()
         frameIdx, dbIdx = self.match_descriptors(frameDescriptors,
-                                                 self.database.descriptors)
+                                                 self.database.descriptors,
+                                                 matching_type='database')
         matchDBTime = time.perf_counter() - matchDBStart
 
         poseEstStart = time.perf_counter()
@@ -442,7 +472,7 @@ class StereoFeatureTracker:
                 if (pose_change > self.pose_threshold).any():
                     print('Pose change larger than threshold, returning' +
                           ' previous pose')
-                    usedKeypoints = 0
+                    db_index_used = np.array([], dtype=int)
                     flag = 1
                 else:
                     # self.database.trim(dbIdx[outliers])
@@ -460,11 +490,11 @@ class StereoFeatureTracker:
                     print('DB INDEX USED:', len(db_index_used))
             else:
                 print('Not enough matches with database, returning previous pose\n')
-                usedKeypoints = 0
+                db_index_used = np.array([], dtype=int)
                 flag = 1
         else:
             print('Not enough matches with database, returning previous pose\n')
-            usedKeypoints = 0
+            db_index_used = np.array([], dtype=int)
             flag = 1
         poseEstTime = time.perf_counter() - poseEstStart
 
@@ -480,9 +510,11 @@ class StereoFeatureTracker:
         flag = 0
         matchDBStart = time.perf_counter()
         frameIdx1, dbIdx1 = self.match_descriptors(self.view1.descriptors,
-                                                   self.database.descriptors)
+                                                   self.database.descriptors,
+                                                   matching_type='database')
         frameIdx2, dbIdx2 = self.match_descriptors(self.view2.descriptors,
-                                                   self.database.descriptors)
+                                                   self.database.descriptors,
+                                                   matching_type='database')
         matchDBTime = time.perf_counter() - matchDBStart
         print('DB MATCHES VIEW1:', len(dbIdx1))
         print('DB MATCHES VIEW2:', len(dbIdx2))
@@ -500,16 +532,16 @@ class StereoFeatureTracker:
             poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     frameIdx1,
-                    np.array([]),
+                    np.array([], dtype=int),
                     dbIdx1,
-                    np.array([]),
+                    np.array([], dtype=int),
                 )
         elif len(frameIdx2):
             poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
-                    np.array([]),
+                    np.array([], dtype=int),
                     frameIdx2,
-                    np.array([]),
+                    np.array([], dtype=int),
                     dbIdx2,
                 )
         else:
@@ -687,10 +719,13 @@ class StereoFeatureTracker:
         DD1[1] = DD2[1]
         return DD1, DD2
 
-    def match_descriptors(self, descriptors1, descriptors2):
+    def match_descriptors(self, descriptors1, descriptors2, matching_type=None):
         """
         Finds matches between two descriptor arrays, returns respective indices
         of matches.
+
+        matching_type variable can be toggled to 'database' or 'intra-frame' to
+        signal either database or intra-frame matching.
         """
         distRatio = self.distRatio
         try:
@@ -707,7 +742,11 @@ class StereoFeatureTracker:
             return np.array([], dtype='int'), np.array([], dtype='int')
 
         matches = self.remove_duplicate_matches(np.array(matches))
-        self.matches_inframe = matches
+
+        if matching_type == 'intra_frame':
+            self.matches_inframe = matches
+        elif matching_type == 'database':
+            self.matches_database = matches
 
         in1 = np.array([matches[i].queryIdx for i in range(len(matches))],
                        dtype='int')
