@@ -217,10 +217,19 @@ class StereoFeatureTracker:
         self.database = LandmarkDatabase(np.array([]), np.array([]))
         self.currentPose = np.zeros(6, dtype=np.float64)  # rX, rY, rZ, X, Y, Z
         self.frameNumber = 0
-        self.estMethod = 'ls'  # Estimate pose using least squares
-        self.metaData = []  # Timing data, size of database, etc.
+
+        self.matches_inframe = []  # Could be useful for diagnostic purposes
+        self.matches_db_view1 = []
+        self.matches_db_view2 = []
+        self.metadata = []  # Timing data, size of database, etc.
         self.pose_history = [] # Past poses with flag
 
+        # Attributes below are 'public'
+
+        # est_method can be set to either 'gn' or 'ls'. 'ls' uses Horn's method
+        # to estimate pose, whereas 'gn' uses least squares minimisation with
+        # iterations of the Gauss-Newton method
+        self.est_method = 'ls'
         self.ratioTest = True  # Apply ratio test in descriptor matching
         self.distRatio = 0.6  # Distance ratio cutoff for ratio test
         self.binaryMatch = False  # Use Hamming norm instead of L2
@@ -228,7 +237,6 @@ class StereoFeatureTracker:
         # If estimated pose is too different from previous pose, reject pose est
         self.pose_threshold = np.array([10, 10, 10, 20, 20, 20])
 
-        print('StereoFeatureTracker initialized.\n')
         # Compute rectifying transforms.
         try:
             Prec1, Prec2, self.Tr1, self.Tr2 = self.rectify_fusiello()
@@ -239,9 +247,7 @@ class StereoFeatureTracker:
             print('Projection matrices could not be rectified! Re-check that ' +
                   'they have been entered correctly!')
 
-        self.matches_inframe = []  # Could be useful for diagnostic purposes
-        self.matches_db_view1 = []
-        self.matches_db_view2 = []
+        print('StereoFeatureTracker initialized.\n')
 
     def set_detectors(self, detector):
         self.view1.set_detAndDes(detector)
@@ -249,7 +255,8 @@ class StereoFeatureTracker:
 
     def process_frame(self, image1, image2, save_poses=True, verbose=True):
         """
-        Method to process a new frame, calculating a new current pose.
+        Method to process a new frame, calculating a new pose estimate. If
+        save_poses is True, poses are saved to self.pose_history.
         Inputs:
             image1, image2 - Images from camera view 1 and view 2 respectively.
         Outputs:
@@ -306,7 +313,7 @@ class StereoFeatureTracker:
         # Estimate pose using Horn's method, finding the required transformation
         # between triangulated points in current frame and matched landmarks in
         # the database.
-        elif self.estMethod == 'ls':
+        elif self.est_method == 'ls':
 
             matchDBTime, poseEstTime, used_landmarks, flag = \
                 self.estimate_pose_ls(X, frameDescriptors)
@@ -316,7 +323,7 @@ class StereoFeatureTracker:
         # Estimate pose using Gauss-Newton iterations, finding required
         # transformation that minimizes pixel projection error between keypoints
         # and matched landmarks in database.
-        elif self.estMethod == 'gn':
+        elif self.est_method == 'gn':
 
             matchDBTime, poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.estimate_pose_gn(X, frameDescriptors, in1, in2)
@@ -342,7 +349,7 @@ class StereoFeatureTracker:
                                       flag])
 
         # Save metadata for current frame.
-        frameMetaData = (self.frameNumber,
+        frame_metadata = (self.frameNumber,
                          loadTime1, loadTime2,
                          detTime1, detTime2,
                          correctDistTime1, correctDistTime2,
@@ -355,7 +362,7 @@ class StereoFeatureTracker:
                          n_used_landmarks1, n_used_landmarks2,
                          len(self.database))
 
-        self.metaData.append(frameMetaData)
+        self.metadata.append(frame_metadata)
         self.frameNumber += 1  # Update frame number.
 
         # Return text output to normal if verbosity was set to false.
@@ -365,8 +372,7 @@ class StereoFeatureTracker:
 
     def save_poses(self, filePath):
         """
-        Saves poses with flag and frame number in pickle format. Saves
-        timestamps if provided.
+        Saves poses with flag and frame number in pickle format.
         """
         pd.DataFrame(data=np.array(self.pose_history)[:, 1:],
                      columns=['rX', 'rY', 'rZ', 'X', 'Y', 'Z', 'Flag'],
@@ -376,7 +382,7 @@ class StereoFeatureTracker:
         """
         Saves metadata as a pandas dataframe, serialized in pickle format.
         """
-        pd.DataFrame(data=np.array(self.metaData)[:, 1:],
+        pd.DataFrame(data=np.array(self.metadata)[:, 1:],
                      columns=['View1 load(s)', 'View2 load(s)',
                               'View1 det/des(s)', 'View2 det/des(s)',
                               'View1 distcorr(s)', 'View2 distcorr(s)',
@@ -388,7 +394,7 @@ class StereoFeatureTracker:
                               '#Intra-frame matches',
                               '#View1 keypoints used', '#View2 keypoints used',
                               '#landmarks in database'],
-                     index=np.array(self.metaData)[:, 0]).to_pickle(filePath)
+                     index=np.array(self.metadata)[:, 0]).to_pickle(filePath)
 
     def rectify_fusiello(self, d1=np.zeros(2), d2=np.zeros(2)):
         """
@@ -553,7 +559,7 @@ class StereoFeatureTracker:
         print('DB MATCHES VIEW2:', len(dbIdx2))
 
         # Estimate pose
-        if (len(frameIdx1) and len(frameIdx2)):
+        if (len(frameIdx1) and len(frameIdx2)): # Landmarks seen in both views
             poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     frameIdx1,
@@ -561,7 +567,7 @@ class StereoFeatureTracker:
                     dbIdx1,
                     dbIdx2,
                 )
-        elif len(frameIdx1):
+        elif len(frameIdx1): # Landmarks seen in view 1 only
             poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     frameIdx1,
@@ -569,7 +575,7 @@ class StereoFeatureTracker:
                     dbIdx1,
                     np.array([], dtype=int),
                 )
-        elif len(frameIdx2):
+        elif len(frameIdx2): # Landmarks seen in view 2 only
             poseEstTime, used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     np.array([], dtype=int),
@@ -579,14 +585,13 @@ class StereoFeatureTracker:
                 )
         else:
             print('No matches with database, returning previous pose.\n')
-            n_used_landmarks1 = 0
-            n_used_landmarks2 = 0
+            used_landmarks1 = np.array([], dtype=int)
+            used_landmarks2 = np.array([], dtype=int)
             poseEstTime = 0
             flag = 1
-            return matchDBTime, poseEstTime, usedKeypoints1, usedKeypoints2, flag
+            return matchDBTime, poseEstTime, used_landmarks1, used_landmarks2, \
+                   flag
 
-        n_used_landmarks1 = len(used_landmarks1)
-        n_used_landmarks2 = len(used_landmarks2)
         H = vec2mat(self.currentPose)
         # Add new entries to database
         new_landmarks = []
@@ -723,7 +728,7 @@ class StereoFeatureTracker:
     @staticmethod
     def euler_jacobian(P, H, X, x):
         """
-        Constructs the Euler Jacobian for use in GN_estimation.
+        Constructs the Euler Jacobian used in GN_estimation.
         """
         n_landmarks = X.shape[0]
         J = np.ones((2*n_landmarks, 6))
