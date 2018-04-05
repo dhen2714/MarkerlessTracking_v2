@@ -237,7 +237,9 @@ class StereoFeatureTracker:
         # If estimated pose is too different from previous pose, reject pose est
         self.pose_threshold = np.array([10, 10, 10, 20, 20, 20])
 
+        self.filtering = False
         self.pose_covariance = np.zeros((6,6))
+        self.process_covariance = 1e-3*np.eye(6)
 
         # Compute rectifying transforms.
         try:
@@ -611,8 +613,7 @@ class StereoFeatureTracker:
                flag
 
     def GN_estimation(self, key_index1, key_index2, db_index1,
-                      db_index2, n_iterations=10, outlier_threshold=2,
-                      filter=False):
+                      db_index2, n_iterations=10, outlier_threshold=2):
         """
         Estimates pose using Gauss-Newton iterations. Based on Andre's IDL
         implentation numerical_estimation_2cams_v2.pro
@@ -673,14 +674,17 @@ class StereoFeatureTracker:
             b = np.dot(J.T, e)
 
             pose_correction = np.linalg.lstsq(A, b, rcond=None)
+
             pose_est = pose_est - pose_correction[0]
 
-        if filter:
-            covariance_est = self.pose_covariance + np.eye(6)
-            S = covariance_est + np.linalg.inv(np.dot(J.T, J))
+        if self.filtering:
+            print('FILTERING!!!')
+            PLS = np.linalg.inv(np.dot(J.T, J))
+            covariance_est = self.pose_covariance + self.process_covariance
+            S = covariance_est + PLS
             W = np.dot(covariance_est, np.linalg.inv(S))
 
-            pose_est = self.currentPose + np.dot(W, (pose_est - self.currentPose))
+            pose_est= self.currentPose + np.dot(W, (pose_est - self.currentPose))
             self.pose_covariance = covariance_est - mdot(W, S, W.T)
 
         pose_change = np.abs(pose_est - self.currentPose)
