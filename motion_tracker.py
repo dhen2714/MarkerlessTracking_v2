@@ -238,8 +238,16 @@ class StereoFeatureTracker:
         self.pose_threshold = np.array([10, 10, 10, 20, 20, 20])
 
         self.filtering = False
-        self.pose_covariance = np.zeros((6,6))
-        self.process_covariance = 1e-3*np.eye(6)
+        self.current_state = np.zeros(12, dtype=np.float64) # includes velocity
+        self.dt = 10e-3
+        self.state_transition = np.eye(12)
+        self.state_transition[:6, 6:] = np.eye(6)
+        self.observation_model = np.zeros((6, 12))
+        self.observation_model[:6, :6] = np.eye(6)
+
+        self.state_covariance = np.zeros((12, 12))
+        self.pose_covariance = np.zeros((12, 12))
+        self.process_covariance = 1e-3*np.eye(12)
 
         # Compute rectifying transforms.
         try:
@@ -678,14 +686,35 @@ class StereoFeatureTracker:
             pose_est = pose_est - pose_correction[0]
 
         if self.filtering:
-            print('FILTERING!!!')
-            PLS = np.linalg.inv(np.dot(J.T, J))
-            covariance_est = self.pose_covariance + self.process_covariance
-            S = covariance_est + PLS
-            W = np.dot(covariance_est, np.linalg.inv(S))
+            F = self.state_transition # State transition model
+            Q = self.process_covariance # Covariance of process noise
+            H = self.observation_model # Observation model
+            x_prior = np.dot(F, self.current_state)
+            P_prior = mdot(F, self.state_covariance, F.T) + Q
+            I = np.eye(12)
+            R = np.linalg.inv(A) # Covariance of observation noise
 
-            pose_est= self.currentPose + np.dot(W, (pose_est - self.currentPose))
-            self.pose_covariance = covariance_est - mdot(W, S, W.T)
+            innovation = pose_est - np.dot(H, x_prior)
+            S = R + mdot(H, P_prior, H.T)
+            K = mdot(P_prior, H.T, np.linalg.inv(S))
+
+            x_post = x_prior + np.dot(K, innovation)
+            P_post = mdot((I - np.dot(K, H)), P_prior, (I - np.dot(K, H)).T) + mdot(K, R, K.T)
+
+            pose_est = x_post[:6].copy()
+            self.current_state = x_post
+            self.pose_covariance = P_post
+
+            # print('FILTERING!!!')
+            # PLS = np.linalg.inv(np.dot(J.T, J))
+            # prediction_est = np.dot(self.state_transtion, self.current_state)
+            # prediction_cov = mdot(self.state_transition, )
+            # covariance_est = self.pose_covariance + self.process_covariance
+            # S = covariance_est + PLS
+            # W = np.dot(covariance_est, np.linalg.inv(S))
+            #
+            # pose_est= self.currentPose + np.dot(W, (pose_est - self.currentPose))
+            # self.pose_covariance = covariance_est - mdot(W, S, W.T)
 
         pose_change = np.abs(pose_est - self.currentPose)
 
