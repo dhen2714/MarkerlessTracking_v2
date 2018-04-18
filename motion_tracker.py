@@ -249,6 +249,9 @@ class StereoFeatureTracker:
         self.pose_covariance = np.zeros((12, 12))
         self.process_covariance = 1e-3*np.eye(12)
 
+        # Used to calculate a running mean and variance of pose.
+        self.aggregate = (1, np.zeros(6, dtype=np.float64), np.zeros(6, dtype=np.float64))
+
         # Compute rectifying transforms.
         try:
             Prec1, Prec2, self.Tr1, self.Tr2 = self.rectify_fusiello()
@@ -345,6 +348,10 @@ class StereoFeatureTracker:
         used_landmark_indices = np.union1d(used_landmarks1, used_landmarks2)
         self.database.update_landmark_usage(used_landmark_indices.astype(int))
 
+        # Running variance and mean used for weighted least squares estimation
+        # in GN estimation.
+        self.update_aggregate()
+
         processFrameTime = time.perf_counter() - processFrameStart
 
         n_used_landmarks1 = len(used_landmarks1)
@@ -362,17 +369,17 @@ class StereoFeatureTracker:
 
         # Save metadata for current frame.
         frame_metadata = (self.frameNumber,
-                         loadTime1, loadTime2,
-                         detTime1, detTime2,
-                         correctDistTime1, correctDistTime2,
-                         matchFrameTime,
-                         matchDBTime,
-                         poseEstTime,
-                         processFrameTime,
-                         self.view1.n_keys, self.view2.n_keys,
-                         len(in1),
-                         n_used_landmarks1, n_used_landmarks2,
-                         len(self.database))
+                          loadTime1, loadTime2,
+                          detTime1, detTime2,
+                          correctDistTime1, correctDistTime2,
+                          matchFrameTime,
+                          matchDBTime,
+                          poseEstTime,
+                          processFrameTime,
+                          self.view1.n_keys, self.view2.n_keys,
+                          len(in1),
+                          n_used_landmarks1, n_used_landmarks2,
+                          len(self.database))
 
         self.metadata.append(frame_metadata)
         self.frameNumber += 1  # Update frame number.
@@ -572,7 +579,8 @@ class StereoFeatureTracker:
 
         # Estimate pose
         if (len(frameIdx1) and len(frameIdx2)): # Landmarks seen in both views
-            poseEstTime, used_landmarks1, used_landmarks2, flag = \
+            poseEstTime, key_index1, key_index2, \
+            used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     frameIdx1,
                     frameIdx2,
@@ -580,7 +588,8 @@ class StereoFeatureTracker:
                     dbIdx2,
                 )
         elif len(frameIdx1): # Landmarks seen in view 1 only
-            poseEstTime, used_landmarks1, used_landmarks2, flag = \
+            poseEstTime, key_index1, key_index2, \
+            used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     frameIdx1,
                     np.array([], dtype=int),
@@ -588,7 +597,8 @@ class StereoFeatureTracker:
                     np.array([], dtype=int),
                 )
         elif len(frameIdx2): # Landmarks seen in view 2 only
-            poseEstTime, used_landmarks1, used_landmarks2, flag = \
+            poseEstTime, key_index1, key_index2, \
+            used_landmarks1, used_landmarks2, flag = \
                 self.GN_estimation(
                     np.array([], dtype=int),
                     frameIdx2,
@@ -607,10 +617,15 @@ class StereoFeatureTracker:
         H = vec2mat(self.currentPose)
         # Add new entries to database
         new_landmarks = []
+        old_landmarks = []
         if len(in1) and flag == 0:
             for i in range(len(in1)):
                 if (in1[i] not in frameIdx1_raw) and (in2[i] not in frameIdx2_raw):
                     new_landmarks.append(i)
+                elif (in1[i] in key_index1) and (in2[i] in key_index2):
+                    db_update_index = used_landmarks1[np.where(key_index1 == in1[i])[0]]
+                    self.database.landmarks[db_update_index] = np.dot(np.linalg.inv(H), X[i, :].T).T
+                    self.database.descriptors[db_update_index] = frameDescriptors[i, :]
 
             X_new = X[new_landmarks, :]
             descriptors_new = frameDescriptors[new_landmarks, :]
@@ -642,18 +657,20 @@ class StereoFeatureTracker:
         for i in range(n_iterations):
             # print('Iteration number', i + 1)
             H = vec2mat(pose_est)
-            J1, projections1, key_coords1, db_index1 =  \
-                self.iterate_jacobian(P1, H, key_coords1,
+            J1, projections1, key_index1, db_index1 =  \
+                self.iterate_jacobian(1, H, key_index1,
                                       db_index1,
                                       outlier_threshold, i)
 
-            J2, projections2, key_coords2, db_index2 = \
-                self.iterate_jacobian(P2, H, key_coords2,
+            J2, projections2, key_index2, db_index2 = \
+                self.iterate_jacobian(2, H, key_index2,
                                       db_index2,
                                       outlier_threshold, i)
 
             used_landmarks1 = len(db_index1)
             used_landmarks2 = len(db_index2)
+            key_coords1 = self.view1.key_coords[key_index1]
+            key_coords2 = self.view2.key_coords[key_index2]
             print('GN Iteration number:', i + 1)
             print('Used keypoints view1:', used_landmarks1)
             print('Used keypoints view2:', used_landmarks2,'\n')
@@ -678,7 +695,13 @@ class StereoFeatureTracker:
                 e2 = (projections2[:2, :] - key_coords2.T).flatten(order='F')
                 e = e2
 
-            A = np.dot(J.T, J)
+            mean, variance = self.aggregate2var()
+            if not (variance == 0).any():
+                W = np.diag((1/np.sqrt(variance)))
+            else:
+                W = np.eye(6)
+
+            A = np.dot(J.T, J) + np.dot(W.T, W)
             b = np.dot(J.T, e)
 
             pose_correction = np.linalg.lstsq(A, b, rcond=None)
@@ -729,14 +752,22 @@ class StereoFeatureTracker:
             flag = 0
 
         poseEstTime = time.perf_counter() - poseEstStart
-        return poseEstTime, db_index1, db_index2, flag
+        return poseEstTime, key_index1, key_index2, db_index1, db_index2, flag
 
-    def iterate_jacobian(self, P, H, key_coords, db_index,
+    def iterate_jacobian(self, view_number, H, key_index, db_index,
                          outlier_threshold=2, iter_number=0):
         """
         Function called in main loop of GN_estimation.
         """
         if len(db_index):
+
+            if view_number == 1:
+                key_coords = self.view1.key_coords[key_index]
+                P = self.view1.P
+            elif view_number == 2:
+                key_coords = self.view2.key_coords[key_index]
+                P = self.view2.P
+
             db_landmarks = self.database.landmarks[db_index]
             projections = mdot(P, H, db_landmarks.T)
             projections = np.apply_along_axis(lambda v: v/v[-1], 0, projections)
@@ -747,17 +778,17 @@ class StereoFeatureTracker:
             outliers = detect_outliers(squErr)
 
             if outliers.shape:
-                key_coords = np.delete(key_coords, outliers, axis=0)
+                key_index= np.delete(key_index, outliers, axis=0)
                 projections = np.delete(projections, outliers, axis=1)
                 db_index = np.delete(db_index, outliers, axis=0)
                 Joutliers = np.array([2*outliers,
                                       (2*outliers + 1)]).flatten()
                 J = np.delete(J, Joutliers, axis=0)
                 squErr = np.delete(squErr, outliers)
-            if iter_number >= 8:
+            if iter_number >= 6:
                 abs_outliers = np.where(squErr > outlier_threshold)[0]
                 if len(abs_outliers) > 0:
-                    key_coords = np.delete(key_coords, abs_outliers, axis=0)
+                    key_index = np.delete(key_index, abs_outliers, axis=0)
                     projections = np.delete(projections, abs_outliers, axis=1)
                     db_index = np.delete(db_index, abs_outliers, axis=0)
                     Joutliers = np.array([2*abs_outliers,
@@ -766,8 +797,8 @@ class StereoFeatureTracker:
         else:
             J = np.array([])
             projections = np.array([])
-            key_coords = np.array([])
-        return J, projections, key_coords, db_index
+            key_index = np.array([])
+        return J, projections, key_index, db_index
 
     @staticmethod
     def euler_jacobian(P, H, X, x):
@@ -786,6 +817,32 @@ class StereoFeatureTracker:
 
             J[:, i] = ((x_new - x)/0.5)[:2, :].flatten(order='F')
         return J
+
+    def update_aggregate(self):
+        """
+        Welford's algorithm.
+        Calculates online mean and M2, which is used to calculate the online
+        variance. Use aggregate2var to convert aggregate to running mean and
+        variance.
+        """
+        count, mean, M2 = self.aggregate
+        count += 1
+        delta = self.currentPose - mean
+        mean = (mean + delta)/count
+        delta2 = self.currentPose - mean
+        M2 = M2 + delta * delta2
+        self.aggregate = (count, mean, M2)
+
+    def aggregate2var(self):
+        """
+        Returns mean and variance from aggregate variable.
+        """
+        count, mean, M2 = self.aggregate
+        if count < 2:
+            return mean, None
+        else:
+            variance = M2/(count - 1)
+            return mean, variance
 
     @staticmethod
     def generate_dds(Tr1, Tr2):
