@@ -247,7 +247,7 @@ class StereoFeatureTracker:
 
         self.state_covariance = np.zeros((12, 12))
         self.pose_covariance = np.zeros((12, 12))
-        self.process_covariance = 1e-3*np.eye(12)
+        self.process_covariance = 1e2*np.eye(12)
 
         # Used to calculate a running mean and variance of pose.
         self.aggregate = (1, np.zeros(6, dtype=np.float64), np.zeros(6, dtype=np.float64))
@@ -622,10 +622,13 @@ class StereoFeatureTracker:
             for i in range(len(in1)):
                 if (in1[i] not in frameIdx1_raw) and (in2[i] not in frameIdx2_raw):
                     new_landmarks.append(i)
-                elif (in1[i] in key_index1) and (in2[i] in key_index2):
-                    db_update_index = used_landmarks1[np.where(key_index1 == in1[i])[0]]
-                    self.database.landmarks[db_update_index] = np.dot(np.linalg.inv(H), X[i, :].T).T
-                    self.database.descriptors[db_update_index] = frameDescriptors[i, :]
+                # elif (in1[i] in key_index1) and (in2[i] in key_index2):
+                #     db_update_index1 = used_landmarks1[np.where(key_index1 == in1[i])[0]]
+                #     db_update_index2 = used_landmarks2[np.where(key_index2 == in2[i])[0]]
+                #     if db_update_index1 == db_update_index2:
+                #         db_update_index = db_update_index1
+                #         self.database.landmarks[db_update_index] = np.dot(np.linalg.inv(H), X[i, :].T).T
+                #         self.database.descriptors[db_update_index] = frameDescriptors[i, :]
 
             X_new = X[new_landmarks, :]
             descriptors_new = frameDescriptors[new_landmarks, :]
@@ -636,7 +639,7 @@ class StereoFeatureTracker:
                flag
 
     def GN_estimation(self, key_index1, key_index2, db_index1,
-                      db_index2, n_iterations=10, outlier_threshold=2):
+                      db_index2, n_iterations=10, outlier_threshold=1):
         """
         Estimates pose using Gauss-Newton iterations. Based on Andre's IDL
         implentation numerical_estimation_2cams_v2.pro
@@ -797,7 +800,7 @@ class StereoFeatureTracker:
         else:
             J = np.array([])
             projections = np.array([])
-            key_index = np.array([])
+            key_index = np.array([], dtype=int)
         return J, projections, key_index, db_index
 
     @staticmethod
