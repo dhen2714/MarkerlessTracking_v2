@@ -70,6 +70,9 @@ class CameraView:
             self.keys = self.detectorType.detect(self.image)
             self.descriptors = self.descriptorType.compute(self.image, keys)
 
+        if self.descriptors is None:
+            self.descriptors = np.array([])
+
         self.n_keys = len(self.keys)
         # Set key_coords as n_keys*2 numpy array of pixel coordinates.
         self.key_coords = np.zeros((self.n_keys, 2), dtype=np.float64)
@@ -115,27 +118,29 @@ class CameraView:
         else:
             k3 = 0
 
-        ud = self.key_coords[:, 0]
-        vd = self.key_coords[:, 1]
-        xn = (ud - self.pp[0])/self.fc[0]  # Normalise points
-        yn = (vd - self.pp[1])/self.fc[1]
-        x = xn
-        y = yn
+        print('NUMBER KEYPOINTS:', self.n_keys)
+        if self.n_keys != 0:
+            ud = self.key_coords[:, 0]
+            vd = self.key_coords[:, 1]
+            xn = (ud - self.pp[0])/self.fc[0]  # Normalise points
+            yn = (vd - self.pp[1])/self.fc[1]
+            x = xn
+            y = yn
 
-        for i in range(20):
-            r2 = x*x + y*y
-            r4 = r2*r2
-            r6 = r4*r2
-            k_radial = 1 + self.kk[0]*r2 + self.kk[1]*r4 + k3*r6
-            delta_x = 2*self.kp[0]*x*y + self.kp[1]*(r2 + 2*x*x)
-            delta_y = 2*self.kp[1]*x*y + self.kp[0]*(r2 + 2*y*y)
-            x = (xn - delta_x)/k_radial
-            y = (yn - delta_y)/k_radial
+            for i in range(20):
+                r2 = x*x + y*y
+                r4 = r2*r2
+                r6 = r4*r2
+                k_radial = 1 + self.kk[0]*r2 + self.kk[1]*r4 + k3*r6
+                delta_x = 2*self.kp[0]*x*y + self.kp[1]*(r2 + 2*x*x)
+                delta_y = 2*self.kp[1]*x*y + self.kp[0]*(r2 + 2*y*y)
+                x = (xn - delta_x)/k_radial
+                y = (yn - delta_y)/k_radial
 
-        x = self.fc[0]*x + self.pp[0]  # Undo normalisation
-        y = self.fc[1]*y + self.pp[1]
+            x = self.fc[0]*x + self.pp[0]  # Undo normalisation
+            y = self.fc[1]*y + self.pp[1]
 
-        self.key_coords = np.array([x, y]).T
+            self.key_coords = np.array([x, y]).T
 
     @classmethod
     def set_detAndDes(cls, features):
