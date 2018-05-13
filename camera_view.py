@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import time
+from sklearn.preprocessing import normalize
 
 
 def time_method(method):
@@ -70,6 +71,8 @@ class CameraView:
             self.keys = self.detectorType.detect(self.image)
             self.descriptors = self.descriptorType.compute(self.image, keys)
 
+        self.descriptors = normalize(self.descriptors)
+
         if self.descriptors is None:
             self.descriptors = np.array([])
 
@@ -118,7 +121,6 @@ class CameraView:
         else:
             k3 = 0
 
-        print('NUMBER KEYPOINTS:', self.n_keys)
         if self.n_keys != 0:
             ud = self.key_coords[:, 0]
             vd = self.key_coords[:, 1]

@@ -1,5 +1,6 @@
 import pandas as pd
 import cv2
+from sklearn.preprocessing import normalize
 import numpy as np
 from camera_view import CameraView
 import sys
@@ -148,7 +149,8 @@ class LandmarkDatabase:
         landmarks     - 3D position of landmarks
         descriptors   - landmark feature vectors
         miss_counts   - number of consecutive frames in which landmark not seen
-        miss_thresh   - if miss_count > miss_thresh, landmark is pruned
+        miss_thresh   - if miss_count > miss_thresh, landmark is pruned. If
+                        miss_thresh is None, no landmark pruning is done
     """
 
     def __init__(self, X, descriptors, miss_thresh=None):
@@ -198,7 +200,7 @@ class LandmarkDatabase:
 
     def save(self, output_filename):
         """
-        Saves database to pickle format.
+        Saves database as a dataframe, serialised in pickle format.
         """
         raw_data = [[X, m, desc] for X, m, desc in zip(
                     self.landmarks, self.miss_counts, self.descriptors)]
@@ -275,7 +277,7 @@ class StereoFeatureTracker:
     def process_frame(self, image1, image2, save_poses=True, verbose=True):
         """
         Method to process a new frame, calculating a new pose estimate. If
-        save_poses is True, poses are saved to self.pose_history.
+        save_poses is True, poses are saved to pose_history.
         Inputs:
             image1, image2 - Images from camera view 1 and view 2 respectively.
         Outputs:
@@ -312,11 +314,14 @@ class StereoFeatureTracker:
 
         # frameDescriptors is an array of descriptors for intra-frame matches
         if len(in1):
-            self.view1.descriptors[in1] = (self.view1.descriptors[in1] +
-                                           self.view2.descriptors[in2])/2
-            self.view2.descriptors[in2] = (self.view1.descriptors[in1] +
-                                           self.view2.descriptors[in2])/2
-            frameDescriptors = self.view1.descriptors[in1]
+            self.view1.descriptors[in1] = normalize((self.view1.descriptors[in1] +
+                                                     self.view2.descriptors[in2])/2)
+            self.view2.descriptors[in2] = self.view1.descriptors[in1].copy()
+            # self.view2.descriptors[in2] = normalize((self.view1.descriptors[in1] +
+            #                                          self.view2.descriptors[in2])/2)
+            # self.view2.descriptors[in2] = self.view1.descriptors[in1]
+            # frameDescriptors = normalize((self.view1.descriptors[in1] + self.view2.descriptors[in2])/2)
+            frameDescriptors = self.view1.descriptors[in1].copy()
 
             # Triangulate intra-frame matched keypoints.
             X = self.triangulate_keypoints(self.view1.P, self.view2.P,
@@ -559,8 +564,6 @@ class StereoFeatureTracker:
         """
         flag = 0
         matchDBStart = time.perf_counter()
-        print(self.view1.descriptors.dtype)
-        print(self.database.descriptors.dtype)
 
         # if self.view1.descriptors and len(self.database):
         matches_view1db = self.match_descriptors(self.view1.descriptors,
@@ -637,13 +640,13 @@ class StereoFeatureTracker:
             for i in range(len(in1)):
                 if (in1[i] not in frameIdx1_raw) and (in2[i] not in frameIdx2_raw):
                     new_landmarks.append(i)
-                elif (in1[i] in key_index1) and (in2[i] in key_index2):
-                    db_update_index1 = used_landmarks1[np.where(key_index1 == in1[i])[0]]
-                    db_update_index2 = used_landmarks2[np.where(key_index2 == in2[i])[0]]
-                    if db_update_index1 == db_update_index2:
-                        db_update_index = db_update_index1
-                        self.database.landmarks[db_update_index] = np.dot(np.linalg.inv(H), X[i, :].T).T
-                        self.database.descriptors[db_update_index] = frameDescriptors[i, :]
+                # elif (in1[i] in key_index1) and (in2[i] in key_index2):
+                #     db_update_index1 = used_landmarks1[np.where(key_index1 == in1[i])[0]]
+                #     db_update_index2 = used_landmarks2[np.where(key_index2 == in2[i])[0]]
+                #     if db_update_index1 == db_update_index2:
+                #         db_update_index = db_update_index1
+                #         self.database.landmarks[db_update_index] = np.dot(np.linalg.inv(H), X[i, :].T).T
+                #         self.database.descriptors[db_update_index] = frameDescriptors[i, :]
 
             X_new = X[new_landmarks, :]
             descriptors_new = frameDescriptors[new_landmarks, :]
@@ -889,16 +892,30 @@ class StereoFeatureTracker:
         signal either database or intra-frame matching.
         """
         distRatio = self.distRatio
+        # if matching_type == 'database':
+        #     distRatio = 0.7
+
         if not (len(descriptors1) and len(descriptors2)):
             return []
 
         try:
+            angle_diffs = []
             if self.ratioTest:
                 match = self.matcher.knnMatch(descriptors1, descriptors2, k=2)
                 matches = []
                 for firstMatch, secondMatch in match:
                     if firstMatch.distance < distRatio*secondMatch.distance:
-                        matches.append(firstMatch)
+                        if matching_type == 'intra_frame':
+                            kp1 = self.view1.keys[firstMatch.queryIdx]
+                            kp2 = self.view2.keys[firstMatch.trainIdx]
+                            angle_diffs.append(np.abs(kp1.angle - kp2.angle))
+                            if np.abs(kp1.angle - kp2.angle) < 100:
+                                matches.append(firstMatch)
+                        else:
+                            matches.append(firstMatch)
+                if matching_type == 'intra_frame':
+                    np.savez('Angles.npz', angle_diffs)
+
             else:
                 matches = self.matcher.match(descriptors1, descriptors2)
         except ValueError:
@@ -939,7 +956,7 @@ class StereoFeatureTracker:
         return matches[np.where(flags == 1)[0]]
 
     @staticmethod
-    def epipolar_constraint(coords1, coords2, T1, T2):
+    def epipolar_constraint(coords1, coords2, T1, T2, pix_thresh=5):
         n = coords1.shape[0]
         if n == 0:
             indices = np.array([], dtype=int)
@@ -950,7 +967,7 @@ class StereoFeatureTracker:
             tcoords2 = np.dot(T2, coords2H.T)
             v1 = tcoords1[1, :]/tcoords1[2, :]
             v2 = tcoords2[1, :]/tcoords2[2, :]
-            indices = np.where(abs(v1 - v2) <= 5)[0]
+            indices = np.where(abs(v1 - v2) <= pix_thresh)[0]
         return indices
 
     @staticmethod
