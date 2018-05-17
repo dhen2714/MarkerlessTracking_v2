@@ -297,7 +297,7 @@ class StereoFeatureTracker:
 
         # Perform intra-frame matching, get indices of matched keypoints.
         matchFrameStart = time.perf_counter()
-        matches_inframe = self.match_descriptors(self.view1.descriptors,
+        matches_inframe = self.match_dotprod(self.view1.descriptors,
                                                  self.view2.descriptors,
                                                  matching_type='intra_frame')
         # Remove keypoints in view 1 that have been matched to multiple
@@ -566,22 +566,22 @@ class StereoFeatureTracker:
         matchDBStart = time.perf_counter()
 
         # if self.view1.descriptors and len(self.database):
-        matches_view1db = self.match_descriptors(self.view1.descriptors,
-                                                 self.database.descriptors,
-                                                 matching_type='database')
+        matches_view1db = self.match_dotprod(self.database.descriptors,
+                                             self.view1.descriptors,
+                                             matching_type='database')
         # else:
         #     matches_view1db
         # if self.view2.descriptors and len(self.database):
-        matches_view2db = self.match_descriptors(self.view2.descriptors,
-                                                 self.database.descriptors,
-                                                 matching_type='database')
+        matches_view2db = self.match_dotprod(self.database.descriptors,
+                                             self.view2.descriptors,
+                                             matching_type='database')
         # frameIdx_raw and dbIdx_raw contain duplicate/unreliable matches. We
         # retain these indices as we add the landmarks with indices
         # complementary to these raw indices to the database. For pose
         # estimation however, we use frameIdx and dbIdx, which don't contain
         # duplicates.
-        frameIdx1_raw, dbIdx1_raw = self.extract_match_indices(matches_view1db)
-        frameIdx2_raw, dbIdx2_raw = self.extract_match_indices(matches_view2db)
+        dbIdx1_raw, frameIdx1_raw = self.extract_match_indices(matches_view1db)
+        dbIdx2_raw, frameIdx2_raw = self.extract_match_indices(matches_view2db)
         self.matches_db_view1 = matches_view1db
         self.matches_db_view2 = matches_view2db
 
@@ -905,22 +905,50 @@ class StereoFeatureTracker:
                 matches = []
                 for firstMatch, secondMatch in match:
                     if firstMatch.distance < distRatio*secondMatch.distance:
-                        if matching_type == 'intra_frame':
-                            kp1 = self.view1.keys[firstMatch.queryIdx]
-                            kp2 = self.view2.keys[firstMatch.trainIdx]
-                            angle_diffs.append(np.abs(kp1.angle - kp2.angle))
-                            if np.abs(kp1.angle - kp2.angle) < 100:
-                                matches.append(firstMatch)
-                        else:
-                            matches.append(firstMatch)
-                if matching_type == 'intra_frame':
-                    np.savez('Angles.npz', angle_diffs)
-
+                        matches.append(firstMatch)
             else:
                 matches = self.matcher.match(descriptors1, descriptors2)
         except ValueError:
             # If database only has one entry, knnMatch will throw a ValueError
             matches = []
+
+        return matches
+
+    def match_dotprod(self, descriptors1, descriptors2, matching_type=None):
+        """
+        Perform matching by calculating matrix product of normalised
+        descriptors1 and transpose of descriptors2.
+        """
+        dist_ratio = self.distRatio
+
+        if not (len(descriptors1)) and (len(descriptors2)):
+            matches = []
+        elif len(descriptors1) < 2 or len(descriptors2) < 2:
+            matches = []
+        else:
+            matches = []
+            # Make sure descriptors are normalised!
+            dotprod = np.dot(descriptors1, descriptors2.T)
+            angles = np.arccos(dotprod)
+            ind_sorted = np.argsort(angles, axis=1)
+            row_ind = np.arange(len(descriptors1))
+
+            # first_matches are the row, col positions of the lowest angles for
+            # each row
+            first_matches = [row_ind, ind_sorted[:, 0]]
+            second_matches = [row_ind, ind_sorted[:, 1]]
+
+            query_ind = row_ind # match indices for descriptors in des1
+            train_ind = ind_sorted[:, 0] # match indices for descs in des2
+            dists = angles[first_matches] # best match distances
+
+            # mask matches that do not satisfy the ratio test
+            mask = (angles[first_matches] < dist_ratio*angles[second_matches])
+
+            # Output list of OpenCV DMatch objects, with fields queryIdx,
+            # trainIdx and distance.
+            for q, t, dist in zip(query_ind[mask], train_ind[mask], dists[mask]):
+                matches.append(cv2.DMatch(q, t, dist))
 
         return matches
 
