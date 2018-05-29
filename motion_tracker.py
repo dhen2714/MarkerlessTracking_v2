@@ -240,20 +240,22 @@ class StereoFeatureTracker:
         self.pose_threshold = np.array([10, 10, 10, 20, 20, 20])
 
         self.filtering = False
-        self.current_state = np.zeros(12, dtype=np.float64) # includes velocity
+        self.current_state = np.zeros(6, dtype=np.float64) # includes velocity
         self.dt = 10e-3
-        self.state_transition = np.eye(12)
-        self.state_transition[:6, 6:] = self.dt*np.eye(6)
-        self.observation_model = np.zeros((6, 12))
-        self.observation_model[:6, :6] = np.eye(6)
+        self.state_transition = np.eye(6)
+        # self.state_transition[:6, 6:] = self.dt*np.eye(6)
+        # self.observation_model = np.zeros((6, 12))
+        # self.observation_model[:6, :6] = np.eye(6)
+        self.observation_model = np.eye(6)
 
-        self.state_covariance = np.zeros((12, 12))
-        self.pose_covariance = np.zeros((12, 12))
-        Gtop = 0.5*(self.dt*self.dt)*np.ones(6)
-        Gbottom = self.dt*np.ones(6)
-        G = np.concatenate((Gtop, Gbottom)).reshape((12, 1))
-        self.process_covariance = np.dot(G, G.T)
-        # self.process_covariance = 1e2*np.eye(12)
+        self.state_covariance = np.zeros((6, 6))
+        self.pose_covariance = np.zeros((6, 6))
+        # Gtop = 0.5*(self.dt*self.dt)*np.ones(6)
+        # Gbottom = self.dt*np.ones(6)
+        # G = np.concatenate((Gtop, Gbottom)).reshape((12, 1))
+        # self.process_covariance = np.dot(G, G.T)
+        self.process_covariance = np.eye(6)
+        self.obs_noise = None
 
         # Used to calculate a running mean and variance of pose.
         self.aggregate = (1, np.zeros(6, dtype=np.float64), np.zeros(6, dtype=np.float64))
@@ -580,16 +582,18 @@ class StereoFeatureTracker:
         # complementary to these raw indices to the database. For pose
         # estimation however, we use frameIdx and dbIdx, which don't contain
         # duplicates.
+
         dbIdx1_raw, frameIdx1_raw = self.extract_match_indices(matches_view1db)
         dbIdx2_raw, frameIdx2_raw = self.extract_match_indices(matches_view2db)
+
         self.matches_db_view1 = matches_view1db
         self.matches_db_view2 = matches_view2db
 
         matches_view1db = self.remove_duplicate_matches(matches_view1db)
         matches_view2db = self.remove_duplicate_matches(matches_view2db)
 
-        frameIdx1, dbIdx1 = self.extract_match_indices(matches_view1db)
-        frameIdx2, dbIdx2 = self.extract_match_indices(matches_view2db)
+        dbIdx1, frameIdx1 = self.extract_match_indices(matches_view1db)
+        dbIdx2, frameIdx2 = self.extract_match_indices(matches_view2db)
 
         matchDBTime = time.perf_counter() - matchDBStart
         print('DB MATCHES VIEW1:', len(dbIdx1))
@@ -739,8 +743,9 @@ class StereoFeatureTracker:
             H = self.observation_model # Observation model
             x_prior = np.dot(F, self.current_state)
             P_prior = mdot(F, self.state_covariance, F.T) + Q
-            I = np.eye(12)
+            I = np.eye(6)
             R = np.linalg.inv(A) # Covariance of observation noise
+            self.obs_noise = R
 
             innovation = pose_est - np.dot(H, x_prior)
             S = R + mdot(H, P_prior, H.T)
@@ -904,6 +909,9 @@ class StereoFeatureTracker:
                 match = self.matcher.knnMatch(descriptors1, descriptors2, k=2)
                 matches = []
                 for firstMatch, secondMatch in match:
+                    if matching_type == 'database':
+                        print('DBMATCH')
+                    print(firstMatch.distance, secondMatch.distance)
                     if firstMatch.distance < distRatio*secondMatch.distance:
                         matches.append(firstMatch)
             else:
@@ -919,7 +927,10 @@ class StereoFeatureTracker:
         Perform matching by calculating matrix product of normalised
         descriptors1 and transpose of descriptors2.
         """
-        dist_ratio = self.distRatio
+        if matching_type == 'database':
+            dist_ratio = 0.8
+        else:
+            dist_ratio = self.distRatio
 
         if not (len(descriptors1)) and (len(descriptors2)):
             matches = []
@@ -929,6 +940,7 @@ class StereoFeatureTracker:
             matches = []
             # Make sure descriptors are normalised!
             dotprod = np.dot(descriptors1, descriptors2.T)
+            dotprod[np.where(dotprod > 1)] = 1
             angles = np.arccos(dotprod)
             ind_sorted = np.argsort(angles, axis=1)
             row_ind = np.arange(len(descriptors1))
