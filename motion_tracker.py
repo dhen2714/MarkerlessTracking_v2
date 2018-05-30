@@ -3,6 +3,7 @@ import cv2
 from sklearn.preprocessing import normalize
 import numpy as np
 from camera_view import CameraView
+from kalman_filter import LinearKalmanFilter
 import sys
 import os
 import time
@@ -240,22 +241,10 @@ class StereoFeatureTracker:
         self.pose_threshold = np.array([10, 10, 10, 20, 20, 20])
 
         self.filtering = False
-        self.current_state = np.zeros(6, dtype=np.float64) # includes velocity
-        self.dt = 10e-3
-        self.state_transition = np.eye(6)
-        # self.state_transition[:6, 6:] = self.dt*np.eye(6)
-        # self.observation_model = np.zeros((6, 12))
-        # self.observation_model[:6, :6] = np.eye(6)
-        self.observation_model = np.eye(6)
-
-        self.state_covariance = np.zeros((6, 6))
-        self.pose_covariance = np.zeros((6, 6))
-        # Gtop = 0.5*(self.dt*self.dt)*np.ones(6)
-        # Gbottom = self.dt*np.ones(6)
-        # G = np.concatenate((Gtop, Gbottom)).reshape((12, 1))
-        # self.process_covariance = np.dot(G, G.T)
-        self.process_covariance = np.eye(6)
-        self.obs_noise = None
+        self.model_velocity = False
+        self.sigma = 1
+        self.filter = LinearKalmanFilter(10e-3, sigma=self.sigma,
+                                         model_velocity=self.model_velocity)
 
         # Used to calculate a running mean and variance of pose.
         self.aggregate = (1, np.zeros(6, dtype=np.float64), np.zeros(6, dtype=np.float64))
@@ -738,36 +727,8 @@ class StereoFeatureTracker:
             pose_est = pose_est - pose_correction[0]
 
         if self.filtering:
-            F = self.state_transition # State transition model
-            Q = self.process_covariance # Covariance of process noise
-            H = self.observation_model # Observation model
-            x_prior = np.dot(F, self.current_state)
-            P_prior = mdot(F, self.state_covariance, F.T) + Q
-            I = np.eye(6)
-            R = np.linalg.inv(A) # Covariance of observation noise
-            self.obs_noise = R
-
-            innovation = pose_est - np.dot(H, x_prior)
-            S = R + mdot(H, P_prior, H.T)
-            K = mdot(P_prior, H.T, np.linalg.inv(S))
-
-            x_post = x_prior + np.dot(K, innovation)
-            P_post = mdot((I - np.dot(K, H)), P_prior, (I - np.dot(K, H)).T) + mdot(K, R, K.T)
-
-            pose_est = x_post[:6].copy()
-            self.current_state = x_post
-            self.pose_covariance = P_post
-
-            # print('FILTERING!!!')
-            # PLS = np.linalg.inv(np.dot(J.T, J))
-            # prediction_est = np.dot(self.state_transtion, self.current_state)
-            # prediction_cov = mdot(self.state_transition, )
-            # covariance_est = self.pose_covariance + self.process_covariance
-            # S = covariance_est + PLS
-            # W = np.dot(covariance_est, np.linalg.inv(S))
-            #
-            # pose_est= self.currentPose + np.dot(W, (pose_est - self.currentPose))
-            # self.pose_covariance = covariance_est - mdot(W, S, W.T)
+            self.filter.step(pose_est, np.linalg.inv(A))
+            pose_est = self.filter.pose
 
         pose_change = np.abs(pose_est - self.currentPose)
 
