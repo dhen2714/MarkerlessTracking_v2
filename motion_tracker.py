@@ -241,8 +241,8 @@ class StereoFeatureTracker:
         self.pose_threshold = np.array([10, 10, 10, 20, 20, 20])
 
         self.filtering = False
-        self.model_velocity = False
-        self.sigma = 1
+        self.model_velocity = True
+        self.sigma = 1000000
         self.filter = LinearKalmanFilter(10e-3, sigma=self.sigma,
                                          model_velocity=self.model_velocity)
 

@@ -20,16 +20,22 @@ class LinearKalmanFilter:
             self.measurement_covariance = np.eye(6)
         else:
             dt = timestep
+            self.current_state = np.zeros(12)
             self.state_transition = np.eye(12)
             self.state_transition[:6, 6:] = dt*np.eye(6)
             self.measurement_model = np.zeros((6, 12))
-            self.observation_model[:6, :6] = np.eye(6)
+            self.measurement_model[:6, :6] = np.eye(6)
             self.state_covariance = np.zeros((12, 12))
 
-            Gtop = 0.5*(dt**2)*np.ones(6)
-            Gbottom = dt*np.ones(6)
-            G = np.concatenate((Gtop, Gbottom)).reshape((12, 1))
-            self.process_covariance = sigma*np.dot(G, G.T)
+            # Gtop = 0.5*(dt**2)*np.ones(6)
+            # Gbottom = dt*np.ones(6)
+            # G = np.concatenate((Gtop, Gbottom)).reshape((12, 1))
+            Q = np.zeros((12, 12))
+            Q[:6, :6] = np.diag(0.25*dt**4*np.ones(6))
+            Q[:6, 6:] = np.diag(0.5*dt**3*np.ones(6))
+            Q[6:, 6:] = np.diag(dt**2*np.ones(6))
+            Q[6:, :6] = np.diag(0.5*dt**3*np.ones(6))
+            self.process_covariance = sigma*Q
             self.measurement_covariance = np.eye(12)
 
     @property
@@ -66,3 +72,8 @@ class LinearKalmanFilter:
 
         self.current_state = x_post
         self.state_covariance = P_post
+
+
+if __name__ == '__main__':
+    LKF = LinearKalmanFilter(1, model_velocity=True)
+    print(LKF.process_covariance)
