@@ -212,7 +212,7 @@ class LandmarkDatabase:
 
 class StereoFeatureTracker:
 
-    def __init__(self, view1, view2):
+    def __init__(self, view1, view2, filtering=True, model_velocity=False):
         assert all([isinstance(view, CameraView) for view in (view1, view2)]), \
             'Arguments must be CameraView objects!'
         self.view1 = view1
@@ -240,8 +240,8 @@ class StereoFeatureTracker:
         # If estimated pose is too different from previous pose, reject pose est
         self.pose_threshold = np.array([10, 10, 10, 20, 20, 20])
 
-        self.filtering = False
-        self.model_velocity = True
+        self.filtering = filtering
+        self.model_velocity = model_velocity
         self.sigma = 1000000
         self.filter = LinearKalmanFilter(10e-3, sigma=self.sigma,
                                          model_velocity=self.model_velocity)
