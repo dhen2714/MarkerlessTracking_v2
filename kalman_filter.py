@@ -12,14 +12,21 @@ class LinearKalmanFilter:
         """
 
         if not model_velocity:
+            self.sigma = sigma
             self.state_transition = np.eye(6)
             self.measurement_model = np.eye(6)
             self.current_state = np.zeros(6)
             self.state_covariance = np.zeros((6, 6))
             self.process_covariance = np.eye(6)
             self.measurement_covariance = np.eye(6)
+            # Diagnostic variables
+            self.Kalman_gain = None
+            self.x_prior = None # A-priori state estimate
+            self.P_prior = None # A-priori state covariance estimate
+
         else:
             dt = timestep
+            self.sigma = sigma
             self.current_state = np.zeros(12)
             self.state_transition = np.eye(12)
             self.state_transition[:6, 6:] = dt*np.eye(6)
@@ -35,8 +42,12 @@ class LinearKalmanFilter:
             Q[:6, 6:] = np.diag(0.5*dt**3*np.ones(6))
             Q[6:, 6:] = np.diag(dt**2*np.ones(6))
             Q[6:, :6] = np.diag(0.5*dt**3*np.ones(6))
-            self.process_covariance = sigma*Q
+            self.process_covariance = Q
             self.measurement_covariance = np.eye(12)
+            # Diagnostic variables
+            self.Kalman_gain = None
+            self.x_prior = None # A-priori state estimate
+            self.P_prior = None # A-priori state covariance estimate
 
     @property
     def state(self):
@@ -55,7 +66,7 @@ class LinearKalmanFilter:
         F = self.state_transition
         H = self.measurement_model
         P = self.state_covariance
-        Q = self.process_covariance
+        Q = self.sigma*self.process_covariance
         R = self.measurement_covariance
 
         # Prediciton step
@@ -70,8 +81,20 @@ class LinearKalmanFilter:
         x_post = x_prior + np.dot(K, innovation)
         P_post = np.dot((np.eye(P_prior.shape[0]) - np.dot(K, H)), P_prior)
 
+        self.Kalman_gain = K
+        self.x_prior = x_prior
+        self.P_prior = P_prior
+
         self.current_state = x_post
         self.state_covariance = P_post
+
+    def save_diagnostics(output_filename):
+        """
+        Saves Kalman gain, prior state estimate, and prior covariance estimate
+        to npz.
+        """
+        np.savez(output_filename, K=self.Kalman_gain, x_prior=self.x_prior,
+                 P_prior=self.P_prior)
 
 
 if __name__ == '__main__':
