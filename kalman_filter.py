@@ -88,7 +88,7 @@ class LinearKalmanFilter:
         self.current_state = x_post
         self.state_covariance = P_post
 
-    def save_diagnostics(output_filename):
+    def save_diagnostics(self, output_filename):
         """
         Saves Kalman gain, prior state estimate, and prior covariance estimate
         to npz.
