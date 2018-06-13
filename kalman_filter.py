@@ -93,7 +93,10 @@ class LinearKalmanFilter:
         Saves Kalman gain, prior state estimate, and prior covariance estimate
         to npz.
         """
-        np.savez(output_filename, K=self.Kalman_gain, x_prior=self.x_prior,
+        np.savez(output_filename, K=self.Kalman_gain,
+                 R=self.measurement_covariance,
+                 Q=self.sigma*self.process_covariance,
+                 x_prior=self.x_prior,
                  P_prior=self.P_prior)
 
 
