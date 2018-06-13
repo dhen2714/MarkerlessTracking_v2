@@ -240,14 +240,15 @@ class StereoFeatureTracker:
         # If estimated pose is too different from previous pose, reject pose est
         self.pose_threshold = np.array([10, 10, 10, 20, 20, 20])
 
-        self.filtering = filtering
-        self.model_velocity = model_velocity
+        self.filtering = filtering # If false, no Kalman filter is applied
+        self.model_velocity = model_velocity # If false, only model position
         self.sigma = 1000000
         self.filter = LinearKalmanFilter(10e-3, sigma=self.sigma,
                                          model_velocity=self.model_velocity)
 
         # Used to calculate a running mean and variance of pose.
-        self.aggregate = (1, np.zeros(6, dtype=np.float64), np.zeros(6, dtype=np.float64))
+        self.aggregate = (1, np.zeros(6, dtype=np.float64),
+                          np.zeros(6, dtype=np.float64))
 
         # Compute rectifying transforms.
         try:
@@ -557,14 +558,14 @@ class StereoFeatureTracker:
         matchDBStart = time.perf_counter()
 
         # if self.view1.descriptors and len(self.database):
-        matches_view1db = self.match_dotprod(self.database.descriptors,
-                                             self.view1.descriptors,
+        matches_view1db = self.match_dotprod(self.view1.descriptors,
+                                             self.database.descriptors,
                                              matching_type='database')
         # else:
         #     matches_view1db
         # if self.view2.descriptors and len(self.database):
-        matches_view2db = self.match_dotprod(self.database.descriptors,
-                                             self.view2.descriptors,
+        matches_view2db = self.match_dotprod(self.view2.descriptors,
+                                             self.database.descriptors,
                                              matching_type='database')
         # frameIdx_raw and dbIdx_raw contain duplicate/unreliable matches. We
         # retain these indices as we add the landmarks with indices
@@ -572,8 +573,8 @@ class StereoFeatureTracker:
         # estimation however, we use frameIdx and dbIdx, which don't contain
         # duplicates.
 
-        dbIdx1_raw, frameIdx1_raw = self.extract_match_indices(matches_view1db)
-        dbIdx2_raw, frameIdx2_raw = self.extract_match_indices(matches_view2db)
+        frameIdx1_raw, dbIdx1_raw = self.extract_match_indices(matches_view1db)
+        frameIdx2_raw, dbIdx2_raw = self.extract_match_indices(matches_view2db)
 
         self.matches_db_view1 = matches_view1db
         self.matches_db_view2 = matches_view2db
@@ -581,8 +582,8 @@ class StereoFeatureTracker:
         matches_view1db = self.remove_duplicate_matches(matches_view1db)
         matches_view2db = self.remove_duplicate_matches(matches_view2db)
 
-        dbIdx1, frameIdx1 = self.extract_match_indices(matches_view1db)
-        dbIdx2, frameIdx2 = self.extract_match_indices(matches_view2db)
+        frameIdx1, dbIdx1 = self.extract_match_indices(matches_view1db)
+        frameIdx2, dbIdx2 = self.extract_match_indices(matches_view2db)
 
         matchDBTime = time.perf_counter() - matchDBStart
         print('DB MATCHES VIEW1:', len(dbIdx1))
