@@ -29,6 +29,8 @@ class StereoFeatureTracker:
         self.pose_history = [] # Past poses with flag
 
         # Attributes below are 'public'
+        self.used_key_indices_1 = np.array([], dtype=int)
+        self.used_key_indices_2 = np.array([], dtype=int)
 
         # est_method can be set to either 'gn' or 'ls'. 'ls' uses Horn's method
         # to estimate pose, whereas 'gn' uses least squares minimisation with
@@ -274,20 +276,20 @@ class StereoFeatureTracker:
         flag = 0
         # Match 3D points found in current frame with database
         matchDBStart = time.perf_counter()
-        matches_db = self.match_descriptors(frameDescriptors,
-                                            self.database.descriptors,
+        matches_db = self.match_descriptors(self.database.descriptors,
+                                            frameDescriptors,
                                             matching_type='database')
         # frameIdx_raw and dbIdx_raw contain duplicate/unreliable matches. We
         # retain these indices as we add the landmarks with indices
         # complementary to these raw indices to the database. For pose
         # estimation however, we use frameIdx and dbIdx, which don't contain
         # duplicates.
-        frameIdx_raw, dbIdx_raw = self.extract_match_indices(matches_db)
+        dbIdx_raw, frameIdx_raw = self.extract_match_indices(matches_db)
         self.matches_db_view1 = matches_db
         self.matches_db_view2 = matches_db
 
         matches_db = self.remove_duplicate_matches(matches_db)
-        frameIdx, dbIdx = self.extract_match_indices(matches_db)
+        dbIdx, frameIdx = self.extract_match_indices(matches_db)
 
         matchDBTime = time.perf_counter() - matchDBStart
 
@@ -359,14 +361,14 @@ class StereoFeatureTracker:
         matchDBStart = time.perf_counter()
 
         # if self.view1.descriptors and len(self.database):
-        matches_view1db = self.match_dotprod(self.view1.descriptors,
-                                             self.database.descriptors,
+        matches_view1db = self.match_dotprod(self.database.descriptors,
+                                             self.view1.descriptors,
                                              matching_type='database')
         # else:
         #     matches_view1db
         # if self.view2.descriptors and len(self.database):
-        matches_view2db = self.match_dotprod(self.view2.descriptors,
-                                             self.database.descriptors,
+        matches_view2db = self.match_dotprod(self.database.descriptors,
+                                             self.view2.descriptors,
                                              matching_type='database')
         # frameIdx_raw and dbIdx_raw contain duplicate/unreliable matches. We
         # retain these indices as we add the landmarks with indices
@@ -374,8 +376,8 @@ class StereoFeatureTracker:
         # estimation however, we use frameIdx and dbIdx, which don't contain
         # duplicates.
 
-        frameIdx1_raw, dbIdx1_raw = self.extract_match_indices(matches_view1db)
-        frameIdx2_raw, dbIdx2_raw = self.extract_match_indices(matches_view2db)
+        dbIdx1_raw, frameIdx1_raw = self.extract_match_indices(matches_view1db)
+        dbIdx2_raw, frameIdx2_raw = self.extract_match_indices(matches_view2db)
 
         self.matches_db_view1 = matches_view1db
         self.matches_db_view2 = matches_view2db
@@ -383,8 +385,8 @@ class StereoFeatureTracker:
         matches_view1db = self.remove_duplicate_matches(matches_view1db)
         matches_view2db = self.remove_duplicate_matches(matches_view2db)
 
-        frameIdx1, dbIdx1 = self.extract_match_indices(matches_view1db)
-        frameIdx2, dbIdx2 = self.extract_match_indices(matches_view2db)
+        dbIdx1, frameIdx1 = self.extract_match_indices(matches_view1db)
+        dbIdx2, frameIdx2 = self.extract_match_indices(matches_view2db)
 
         matchDBTime = time.perf_counter() - matchDBStart
         print('DB MATCHES VIEW1:', len(dbIdx1))
@@ -431,6 +433,8 @@ class StereoFeatureTracker:
         # Add new entries to database
         new_landmarks = []
         old_landmarks = []
+        self.used_key_indices_1 = key_index1
+        self.used_key_indices_2 = key_index2
         if len(in1) and flag == 0:
             for i in range(len(in1)):
                 if (in1[i] not in frameIdx1_raw) and (in2[i] not in frameIdx2_raw):
