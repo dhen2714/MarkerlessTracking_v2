@@ -61,13 +61,23 @@ class LandmarkDatabase:
         if self.miss_thresh is not None:
             self.trim(np.where(self.miss_counts >= self.miss_thresh)[0])
 
+    @property
+    def dataframe(self):
+        """Returns database as a pandas Dataframe"""
+        raw_data = [[X, m, desc] for X, m, desc in zip(
+                    self.landmarks, self.miss_counts, self.descriptors)]
+        df = pd.DataFrame(data=raw_data,
+                          columns=['Position', 'Miss count', 'Descriptor'])
+        return df
+
     def save(self, output_filename):
         """
         Saves database as a dataframe, serialised in pickle format.
         """
-        raw_data = [[X, m, desc] for X, m, desc in zip(
-                    self.landmarks, self.miss_counts, self.descriptors)]
-        pd.DataFrame(data=raw_data,
-                     columns=['Position',
-                              'Miss count',
-                              'Descriptor']).to_pickle(output_filename)
+        # raw_data = [[X, m, desc] for X, m, desc in zip(
+        #             self.landmarks, self.miss_counts, self.descriptors)]
+        self.dataframe.to_pickle(output_filename)
+        # pd.DataFrame(data=raw_data,
+        #              columns=['Position',
+        #                       'Miss count',
+        #                       'Descriptor']).to_pickle(output_filename)
