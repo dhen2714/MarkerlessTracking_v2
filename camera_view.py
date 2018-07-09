@@ -71,7 +71,11 @@ class CameraView:
             self.keys = self.detectorType.detect(self.image)
             self.descriptors = self.descriptorType.compute(self.image, keys)
 
-        self.descriptors = normalize(self.descriptors)
+        # normalize throws ValueError if descriptors is None.
+        try:
+            self.descriptors = normalize(self.descriptors)
+        except ValueError:
+            pass
 
         if self.descriptors is None:
             self.descriptors = np.array([])
