@@ -73,7 +73,7 @@ class CameraView:
 
         # normalize throws ValueError if descriptors is None.
         try:
-            self.descriptors = normalize(self.descriptors)
+            self.descriptors = (self.descriptors)
         except ValueError:
             pass
 
