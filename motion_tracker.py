@@ -92,7 +92,7 @@ class StereoFeatureTracker:
 
         # Perform intra-frame matching, get indices of matched keypoints.
         matchFrameStart = time.perf_counter()
-        matches_inframe = self.match_dotprod(self.view1.descriptors,
+        matches_inframe = self.match_descriptors(self.view1.descriptors,
                                                  self.view2.descriptors,
                                                  matching_type='intra_frame')
         # Remove keypoints in view 1 that have been matched to multiple
@@ -109,8 +109,8 @@ class StereoFeatureTracker:
 
         # frameDescriptors is an array of descriptors for intra-frame matches
         if len(in1):
-            self.view1.descriptors[in1] = normalize((self.view1.descriptors[in1] +
-                                                     self.view2.descriptors[in2])/2)
+            self.view1.descriptors[in1] = ((self.view1.descriptors[in1] +
+                                            self.view2.descriptors[in2])/2)
             self.view2.descriptors[in2] = self.view1.descriptors[in1].copy()
             # self.view2.descriptors[in2] = normalize((self.view1.descriptors[in1] +
             #                                          self.view2.descriptors[in2])/2)
@@ -361,15 +361,15 @@ class StereoFeatureTracker:
         matchDBStart = time.perf_counter()
 
         # if self.view1.descriptors and len(self.database):
-        matches_view1db = self.match_dotprod(self.database.descriptors,
-                                             self.view1.descriptors,
-                                             matching_type='database')
+        matches_view1db = self.match_descriptors(self.database.descriptors,
+                                                 self.view1.descriptors,
+                                                 matching_type='database')
         # else:
         #     matches_view1db
         # if self.view2.descriptors and len(self.database):
-        matches_view2db = self.match_dotprod(self.database.descriptors,
-                                             self.view2.descriptors,
-                                             matching_type='database')
+        matches_view2db = self.match_descriptors(self.database.descriptors,
+                                                 self.view2.descriptors,
+                                                 matching_type='database')
         # frameIdx_raw and dbIdx_raw contain duplicate/unreliable matches. We
         # retain these indices as we add the landmarks with indices
         # complementary to these raw indices to the database. For pose
@@ -664,8 +664,6 @@ class StereoFeatureTracker:
         signal either database or intra-frame matching.
         """
         distRatio = self.distRatio
-        # if matching_type == 'database':
-        #     distRatio = 0.7
 
         if not (len(descriptors1) and len(descriptors2)):
             return []
@@ -676,9 +674,6 @@ class StereoFeatureTracker:
                 match = self.matcher.knnMatch(descriptors1, descriptors2, k=2)
                 matches = []
                 for firstMatch, secondMatch in match:
-                    if matching_type == 'database':
-                        print('DBMATCH')
-                    print(firstMatch.distance, secondMatch.distance)
                     if firstMatch.distance < distRatio*secondMatch.distance:
                         matches.append(firstMatch)
             else:
