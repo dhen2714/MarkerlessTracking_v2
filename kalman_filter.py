@@ -97,7 +97,8 @@ class LinearKalmanFilter:
                  R=self.measurement_covariance,
                  Q=self.sigma*self.process_covariance,
                  x_prior=self.x_prior,
-                 P_prior=self.P_prior)
+                 P_prior=self.P_prior,
+                 x_post=self.current_state)
 
 
 if __name__ == '__main__':
