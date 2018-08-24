@@ -42,6 +42,14 @@ class LandmarkDatabase:
         self.descriptors = np.delete(self.descriptors, indices, axis=0)
         self.miss_counts = np.delete(self.miss_counts, indices)
 
+    def trim_unused(self, miss_thresh=None):
+        """Trims landmarks from database that have not been used recently."""
+        if miss_thresh is None and self.miss_thresh is not None:
+            miss_thresh = self.miss_thresh
+            self.trim(np.where(self.miss_counts >= miss_thresh)[0])
+        elif miss_thresh is not None:
+            self.trim(np.where(self.miss_counts >= miss_thresh)[0])
+
     def update_landmark_usage(self, landmark_indices):
         """
         Updates miss counts for entries in database. If indices are in the input
