@@ -13,7 +13,7 @@ import time
 
 class StereoFeatureTracker:
 
-    def __init__(self, view1, view2, filtering=True, model_velocity=False):
+    def __init__(self, view1, view2, filtering=False, model_velocity=False):
         assert all([isinstance(view, CameraView) for view in (view1, view2)]), \
             'Arguments must be CameraView objects!'
         self.view1 = view1
@@ -25,6 +25,7 @@ class StereoFeatureTracker:
         self.matches_inframe = []  # Could be useful for diagnostic purposes
         self.matches_db_view1 = []
         self.matches_db_view2 = []
+        self.verbose = True
         self.metadata = []  # Timing data, size of database, etc.
         self.pose_history = [] # Past poses with flag
 
@@ -35,7 +36,7 @@ class StereoFeatureTracker:
         # est_method can be set to either 'gn' or 'ls'. 'ls' uses Horn's method
         # to estimate pose, whereas 'gn' uses least squares minimisation with
         # iterations of the Gauss-Newton method
-        self.est_method = 'ls'
+        self.est_method = 'gn'
         self.ratioTest = True  # Apply ratio test in descriptor matching
         self.distRatio = 0.6  # Distance ratio cutoff for ratio test
         self.binaryMatch = False  # Use Hamming norm instead of L2
@@ -389,8 +390,6 @@ class StereoFeatureTracker:
         dbIdx2, frameIdx2 = self.extract_match_indices(matches_view2db)
 
         matchDBTime = time.perf_counter() - matchDBStart
-        print('DB MATCHES VIEW1:', len(dbIdx1))
-        print('DB MATCHES VIEW2:', len(dbIdx2))
 
         # Estimate pose
         if (len(frameIdx1) and len(frameIdx2)): # Landmarks seen in both views
@@ -491,9 +490,11 @@ class StereoFeatureTracker:
             used_landmarks2 = len(db_index2)
             key_coords1 = self.view1.key_coords[key_index1]
             key_coords2 = self.view2.key_coords[key_index2]
-            print('GN Iteration number:', i + 1)
-            print('Used keypoints view1:', used_landmarks1)
-            print('Used keypoints view2:', used_landmarks2,'\n')
+
+            if self.verbose:
+                print('GN Iteration number:', i + 1)
+                print('Used keypoints view1:', used_landmarks1)
+                print('Used keypoints view2:', used_landmarks2,'\n')
 
             if used_landmarks1 + used_landmarks2 < 3:
                 if (len(self.database)) == 0 and (self.currentPose == 0).all():
@@ -519,11 +520,11 @@ class StereoFeatureTracker:
                 e2 = (projections2[:2, :] - key_coords2.T).flatten(order='F')
                 e = e2
 
-            mean, variance = self.aggregate2var()
-            if not (variance == 0).any():
-                W = np.diag((1/np.sqrt(variance)))
-            else:
-                W = np.eye(6)
+            # mean, variance = self.aggregate2var()
+            # if not (variance == 0).any():
+            #     W = np.diag((1/np.sqrt(variance)))
+            # else:
+            #     W = np.eye(6)
 
             A = np.dot(J.T, J) #+ np.dot(W.T, W)
             b = np.dot(J.T, e)
