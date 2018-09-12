@@ -24,13 +24,14 @@ class CameraView:
     frame_number = 0
 
     def __init__(self, P=np.ones((3, 4)), fc=np.zeros(2),
-                 pp=np.zeros(2), kk=np.zeros(3), kp=np.zeros(2)):
+                 pp=np.zeros(2), kk=np.zeros(3), kp=np.zeros(2), mask=None):
         # print('Initialize camera view.')
         self.P = P    # Projection matrix
         self.fc = fc  # 2 element focal length
         self.pp = pp  # Principal point
         self.kk = kk  # Radial distortion, 2 or 3 coefficients
         self.kp = kp  # Tangential distortion
+        self.mask = mask
 
         # Attributes below change with every call of process_frame()
         self.image = None
@@ -66,10 +67,10 @@ class CameraView:
         # detect() and compute() steps.
         if self.detectorType.__class__ == self.descriptorType.__class__:
             self.keys, self.descriptors = self.detectorType.detectAndCompute(
-                self.image, None)
+                self.image, self.mask)
         else:
-            self.keys = self.detectorType.detect(self.image)
-            self.descriptors = self.descriptorType.compute(self.image, keys)
+            self.keys = self.detectorType.detect(self.image, self.mask)
+            self.descriptors = self.descriptorType.compute(self.image, self.keys)
 
         # normalize throws ValueError if descriptors is None.
         try:
