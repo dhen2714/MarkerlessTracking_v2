@@ -47,7 +47,7 @@ class StereoFeatureTracker:
         self.filtering = filtering # If false, no Kalman filter is applied
         self.model_velocity = model_velocity # If false, only model position
         self.sigma = 1000000
-        self.filter = LinearKalmanFilter(10e-3, sigma=self.sigma,
+        self.filter = LinearKalmanFilter(10e-2, sigma=self.sigma,
                                          model_velocity=self.model_velocity)
 
         # Used to calculate a running mean and variance of pose.
