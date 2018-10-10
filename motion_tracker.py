@@ -43,6 +43,8 @@ class StereoFeatureTracker:
         self.matcher = cv2.BFMatcher()  # Initialize match handler
         # If estimated pose is too different from previous pose, reject pose est
         self.pose_threshold = np.array([10, 10, 10, 20, 20, 20])
+        # If specified, does not update the database after the cutoff
+        self.update_db_cutoff = None
 
         self.filtering = filtering # If false, no Kalman filter is applied
         self.model_velocity = model_velocity # If false, only model position
@@ -434,22 +436,24 @@ class StereoFeatureTracker:
         old_landmarks = []
         self.used_key_indices_1 = key_index1
         self.used_key_indices_2 = key_index2
-        if len(in1) and flag == 0:
-            for i in range(len(in1)):
-                if (in1[i] not in frameIdx1_raw) and (in2[i] not in frameIdx2_raw):
-                    new_landmarks.append(i)
-                # elif (in1[i] in key_index1) and (in2[i] in key_index2):
-                #     db_update_index1 = used_landmarks1[np.where(key_index1 == in1[i])[0]]
-                #     db_update_index2 = used_landmarks2[np.where(key_index2 == in2[i])[0]]
-                #     if db_update_index1 == db_update_index2:
-                #         db_update_index = db_update_index1
-                #         self.database.landmarks[db_update_index] = np.dot(np.linalg.inv(H), X[i, :].T).T
-                #         self.database.descriptors[db_update_index] = frameDescriptors[i, :]
 
-            X_new = X[new_landmarks, :]
-            descriptors_new = frameDescriptors[new_landmarks, :]
-            X_new = mdot(np.linalg.inv(H), X_new.T).T
-            self.database.update(X_new, descriptors_new)
+        if self.update_db_cutoff is None or self.frameNumber < self.update_db_cutoff:
+            if len(in1) and flag == 0:
+                for i in range(len(in1)):
+                    if (in1[i] not in frameIdx1_raw) and (in2[i] not in frameIdx2_raw):
+                        new_landmarks.append(i)
+                    # elif (in1[i] in key_index1) and (in2[i] in key_index2):
+                    #     db_update_index1 = used_landmarks1[np.where(key_index1 == in1[i])[0]]
+                    #     db_update_index2 = used_landmarks2[np.where(key_index2 == in2[i])[0]]
+                    #     if db_update_index1 == db_update_index2:
+                    #         db_update_index = db_update_index1
+                    #         self.database.landmarks[db_update_index] = np.dot(np.linalg.inv(H), X[i, :].T).T
+                    #         self.database.descriptors[db_update_index] = frameDescriptors[i, :]
+
+                X_new = X[new_landmarks, :]
+                descriptors_new = frameDescriptors[new_landmarks, :]
+                X_new = mdot(np.linalg.inv(H), X_new.T).T
+                self.database.update(X_new, descriptors_new)
 
         return matchDBTime, poseEstTime, used_landmarks1, used_landmarks2, \
                flag
