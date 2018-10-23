@@ -311,6 +311,7 @@ class StereoFeatureTracker:
 
             # Absolute outlier rejection
             outliers = np.where(squErr > 3)[0]
+
             # Relative outlier rejection
             # outliers = detect_outliers(squErr)
             XMatched = np.delete(XMatched, outliers, axis=0)
@@ -390,7 +391,8 @@ class StereoFeatureTracker:
 
         dbIdx1, frameIdx1 = self.extract_match_indices(matches_view1db)
         dbIdx2, frameIdx2 = self.extract_match_indices(matches_view2db)
-
+        print('Number of db matches view1:', len(frameIdx1))
+        print('Number of db matches view2:', len(frameIdx2))
         matchDBTime = time.perf_counter() - matchDBStart
 
         # Estimate pose
@@ -459,7 +461,7 @@ class StereoFeatureTracker:
                flag
 
     def GN_estimation(self, key_index1, key_index2, db_index1,
-                      db_index2, n_iterations=10, outlier_threshold=1):
+                      db_index2, n_iterations=10, outlier_threshold=2):
         """
         Estimates pose using Gauss-Newton iterations. Based on Andre's IDL
         implentation numerical_estimation_2cams_v2.pro
