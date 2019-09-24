@@ -52,6 +52,7 @@ class StereoFeatureTracker:
         self.filter = LinearKalmanFilter(10e-2, sigma=self.sigma,
                                          model_velocity=self.model_velocity)
 
+        self.reprojection_errors = np.array([]) # For diagnostics, GN est
         # Used to calculate a running mean and variance of pose.
         self.aggregate = (1, np.zeros(6, dtype=np.float64),
                           np.zeros(6, dtype=np.float64))
@@ -510,6 +511,7 @@ class StereoFeatureTracker:
                 poseEstTime = time.perf_counter() - poseEstStart
                 print('Cannot estimate pose from this frame, return last pose.')
                 usedKeypoints1, usedKeypoints2 = 0, 0
+                self.reprojection_errors = np.array([])
                 return poseEstTime, key_index1, key_index2, db_index1, db_index2, flag
 
             if J1.size and J2.size:
@@ -544,6 +546,7 @@ class StereoFeatureTracker:
             pose_est = self.filter.pose
 
         pose_change = np.abs(pose_est - self.currentPose)
+        self.reprojection_errors = e
 
         if (pose_change > self.pose_threshold).any():
             print('Pose change larger than threshold, returning' +
