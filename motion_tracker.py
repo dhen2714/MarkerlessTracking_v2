@@ -355,7 +355,8 @@ class StereoFeatureTracker:
 
         return matchDBTime, poseEstTime, db_index_used, flag
 
-    def estimate_pose_gn(self, X, frameDescriptors, in1, in2):
+    def estimate_pose_gn(self, X, frameDescriptors, in1, in2, n_iterations=10,
+         abs_pix_thresh=2):
         """
         Matches keypoints from view1 and view2 to database indepedently. If
         there are matches, calls GN_estimation() to calculate pose. Retuns time
@@ -405,6 +406,8 @@ class StereoFeatureTracker:
                     frameIdx2,
                     dbIdx1,
                     dbIdx2,
+                    n_iterations,
+                    abs_pix_thresh
                 )
         elif len(frameIdx1): # Landmarks seen in view 1 only
             poseEstTime, key_index1, key_index2, \
@@ -414,6 +417,8 @@ class StereoFeatureTracker:
                     np.array([], dtype=int),
                     dbIdx1,
                     np.array([], dtype=int),
+                    n_iterations,
+                    abs_pix_thresh
                 )
         elif len(frameIdx2): # Landmarks seen in view 2 only
             poseEstTime, key_index1, key_index2, \
@@ -423,6 +428,8 @@ class StereoFeatureTracker:
                     frameIdx2,
                     np.array([], dtype=int),
                     dbIdx2,
+                    n_iterations,
+                    abs_pix_thresh
                 )
         else:
             print('No matches with database, returning previous pose.\n')
